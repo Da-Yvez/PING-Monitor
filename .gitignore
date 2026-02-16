@@ -13,10 +13,12 @@ ENV/
 env/
 .virtualenv/
 
-# PyInstaller
+# PyInstaller & Build
 build/
 dist/
 *.spec
+!ping_monitor.spec
+installer_output/
 
 # IDE
 .vscode/
@@ -30,8 +32,15 @@ dist/
 Thumbs.db
 desktop.ini
 
-# Application specific
+# Application storage
 .ping_monitor_settings.json
+hosts.json
 
 # Logs
 *.log
+
+# Temporary Installer Assets
+installer_logo.png
+create_*.py
+
+Website/

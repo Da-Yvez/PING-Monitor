@@ -265,6 +265,13 @@ class PingApp(ctk.CTk):
         self.title(APP_TITLE)
         self.geometry(APP_SIZE)
         
+        # Set window icon
+        icon_path = resource_path("ping_monitor_icon.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except: pass
+        
         # Data
         self.manager = PingManager()
         self.hosts_map: Dict[str, HostCard] = {} 
@@ -510,26 +517,53 @@ class PingApp(ctk.CTk):
     def _on_about(self):
         if self.toplevel_about is None or not self.toplevel_about.winfo_exists():
             self.toplevel_about = ctk.CTkToplevel(self)
-            self.toplevel_about.title("About")
-            self.toplevel_about.geometry("400x520")
+            self.toplevel_about.title("About Ping Monitor")
+            self.toplevel_about.geometry("500x720")
             self.toplevel_about.resizable(False, False)
             self.toplevel_about.lift()
             self.toplevel_about.focus_force()
             self.toplevel_about.attributes("-topmost", True) 
 
-            lbl_title = ctk.CTkLabel(self.toplevel_about, text="Ping Monitor", font=("Arial", 28, "bold"))
-            lbl_title.pack(pady=(30, 10))
+            # Application Title
+            lbl_title = ctk.CTkLabel(self.toplevel_about, text="Ping Monitor", font=("Arial", 32, "bold"))
+            lbl_title.pack(pady=(30, 5))
             
-            lbl_ver = ctk.CTkLabel(self.toplevel_about, text="v2.3 Platinum", text_color="gray")
+            # Version
+            lbl_ver = ctk.CTkLabel(self.toplevel_about, text="v3.0 Professional Edition", text_color="#10b981", font=("Arial", 14, "bold"))
             lbl_ver.pack(pady=(0, 20))
             
-            lbl_cred = ctk.CTkLabel(self.toplevel_about, text="Created by Yvexa", font=("Arial", 18))
-            lbl_cred.pack()
+            # Separator
+            separator1 = ctk.CTkFrame(self.toplevel_about, height=2, fg_color="#333333")
+            separator1.pack(fill="x", padx=40, pady=10)
             
-            lbl_link = ctk.CTkLabel(self.toplevel_about, text="Yvexa.dev", font=("Arial", 16), text_color="#3b8ed0", cursor="hand2")
-            lbl_link.pack(pady=(0, 20))
+            # Company Info
+            lbl_company = ctk.CTkLabel(self.toplevel_about, text="Developed by", font=("Arial", 12), text_color="gray")
+            lbl_company.pack(pady=(10, 5))
+            
+            lbl_yvexa = ctk.CTkLabel(self.toplevel_about, text="YVEXA", font=("Arial", 28, "bold"), text_color="#10b981")
+            lbl_yvexa.pack(pady=(0, 5))
+            
+            lbl_tagline = ctk.CTkLabel(self.toplevel_about, text="Premium Web Development & Design Agency", 
+                                       font=("Arial", 13), text_color="#aaaaaa")
+            lbl_tagline.pack(pady=(0, 15))
+            
+            # Description
+            desc_text = "Fast, secure, and beautifully designed\ndigital experiences crafted with\nmodern technologies."
+            lbl_desc = ctk.CTkLabel(self.toplevel_about, text=desc_text, 
+                                   font=("Arial", 12), text_color="#888888", justify="center")
+            lbl_desc.pack(pady=(0, 15))
+            
+            # Website Link
+            lbl_link = ctk.CTkLabel(self.toplevel_about, text="🌐 www.yvexa.dev", 
+                                   font=("Arial", 16, "bold"), text_color="#3b8ed0", cursor="hand2")
+            lbl_link.pack(pady=(5, 10))
             lbl_link.bind("<Button-1>", lambda e: os.startfile("https://yvexa.dev") if os.name == 'nt' else None)
+            
+            # Separator
+            separator2 = ctk.CTkFrame(self.toplevel_about, height=2, fg_color="#333333")
+            separator2.pack(fill="x", padx=40, pady=15)
 
+            # QR Code
             qr_path = resource_path("qr.png")
             if os.path.exists(qr_path):
                 try:
@@ -538,9 +572,17 @@ class PingApp(ctk.CTk):
                     img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(200, 200))
                     lbl_img = ctk.CTkLabel(self.toplevel_about, image=img, text="")
                     lbl_img.pack(pady=10)
+                    
+                    lbl_qr_text = ctk.CTkLabel(self.toplevel_about, text="Scan to visit our website", 
+                                              font=("Arial", 11), text_color="gray")
+                    lbl_qr_text.pack(pady=(0, 10))
                 except: pass
-            else:
-                ctk.CTkLabel(self.toplevel_about, text="(qr.png not found)").pack()
+            
+            # Copyright
+            lbl_copyright = ctk.CTkLabel(self.toplevel_about, 
+                                        text="© 2026 Yvexa. All rights reserved.", 
+                                        font=("Arial", 10), text_color="#555555")
+            lbl_copyright.pack(side="bottom", pady=15)
         else:
             self.toplevel_about.lift()
             self.toplevel_about.focus_force()
