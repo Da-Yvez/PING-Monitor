@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import datetime
 from urllib.parse import urlparse
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, TypedDict
 
 # GUI Imports
 import customtkinter as ctk
@@ -21,114 +21,151 @@ ctk.set_default_color_theme("blue")
 
 APP_TITLE = "Ping Monitor"
 APP_SIZE = "1100x700"
-SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".ping_monitor_settings.json")
 DEFAULT_INTERVAL = 1.0
-
 
 def resource_path(relative_path: str) -> str:
     """Get absolute path to resource, works for dev and for PyInstaller"""
     try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
+def get_user_data_dir() -> str:
+    """Get the user data directory for persistence."""
+    if os.name == 'nt':
+        app_data = os.getenv('APPDATA')
+        if app_data:
+            path = os.path.join(app_data, "PingMonitor")
+        else:
+            path = os.path.join(os.path.expanduser("~"), ".ping_monitor")
+    else:
+        path = os.path.join(os.path.expanduser("~"), ".ping_monitor")
+    
+    if not os.path.exists(path):
+        os.makedirs(path)
+    return path
 
 class HostCard(ctk.CTkFrame):
     """
-    A card widget displaying stats for a single host.
-    Styled with "OLED Dark" theme and high visibility.
+    Compact card widget displaying stats for a single host.
     """
-    def __init__(self, master, host: str, remove_callback, *args, **kwargs):
-        super().__init__(master, corner_radius=12, fg_color="#0a0a0a", border_width=1, border_color="#222222", *args, **kwargs)
-        self.host = host
+    def __init__(self, master, name: str, target: str, remove_callback, *args, **kwargs):
+        super().__init__(master, corner_radius=8, fg_color="#0a0a0a", border_width=2, border_color="#222222", *args, **kwargs)
+        self.name = name
+        self.target = target
         self.remove_callback = remove_callback
+        self.blink_state = False
         
-        # Grid layout
-        self.grid_columnconfigure(1, weight=1)  # Details expand
+        # Grid layout - Optimized for width
+        # Col 0: Status Dot
+        # Col 1: Name/Target (Left) - Weight 1
+        # Col 2: Min/Max & Last Seen (Center) - Weight 1
+        # Col 3: Stats (Center) - Weight 1
+        # Col 4: Latency (Right)
+        # Col 5: Delete (Far Right)
         
-        # -- 1. Status Indicator (Big Dot) --
-        self.status_indicator = ctk.CTkLabel(self, text="●", font=("Arial", 36), text_color="gray")
-        self.status_indicator.grid(row=0, column=0, rowspan=2, padx=(15, 10), pady=15, sticky="w")
+        self.grid_columnconfigure(1, weight=1) 
+        self.grid_columnconfigure(2, weight=1)
+        self.grid_columnconfigure(3, weight=1)
+
+        # -- 0. Status Indicator --
+        self.status_indicator = ctk.CTkLabel(self, text="●", font=("Arial", 28), text_color="gray")
+        self.status_indicator.grid(row=0, column=0, rowspan=2, padx=(10, 5), pady=5, sticky="w")
         
-        # -- 2. Host Info --
+        # -- 1. Host Info --
         self.info_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.info_frame.grid(row=0, column=1, rowspan=2, sticky="nswe", padx=5)
         
-        self.lbl_host = ctk.CTkLabel(self.info_frame, text=host, font=("Roboto", 18, "bold"), text_color="#ffffff")
-        self.lbl_host.pack(anchor="w")
+        self.lbl_name = ctk.CTkLabel(self.info_frame, text=name, font=("Roboto", 16, "bold"), text_color="#ffffff")
+        self.lbl_name.pack(anchor="w", pady=(2, 0))
         
-        self.lbl_ip = ctk.CTkLabel(self.info_frame, text="Resolving IP...", font=("Roboto", 14), text_color="#aaaaaa")
-        self.lbl_ip.pack(anchor="w")
-        
-        self.lbl_uptime = ctk.CTkLabel(self.info_frame, text="Uptime: --%", font=("Roboto", 12), text_color="#666666")
-        self.lbl_uptime.pack(anchor="w")
-        # -- 3. Stats (Sent/Recv/Loss) --
-        self.stats_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.stats_frame.grid(row=0, column=2, rowspan=2, padx=20, sticky="e")
-        
-        self.lbl_sent = ctk.CTkLabel(self.stats_frame, text="S: 0 | R: 0", font=("Roboto Mono", 14), text_color="#dddddd")
-        self.lbl_sent.pack(anchor="e")
-        
-        self.lbl_loss = ctk.CTkLabel(self.stats_frame, text="Loss: 0%", font=("Roboto Mono", 14, "bold"), text_color="#dddddd")
-        self.lbl_loss.pack(anchor="e")
+        self.lbl_target = ctk.CTkLabel(self.info_frame, text=target, font=("Roboto", 14), text_color="#dddddd")
+        self.lbl_target.pack(anchor="w", pady=(0, 2))
 
-        # -- 4. Latency (Big Number) --
-        self.lbl_latency = ctk.CTkLabel(self, text="-- ms", font=("Roboto", 28, "bold"), text_color="#ffffff")
-        self.lbl_latency.grid(row=0, column=3, rowspan=2, padx=20, sticky="e")
+        # -- 2. Min/Max & Last Seen --
+        self.mid_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.mid_frame.grid(row=0, column=2, rowspan=2, sticky="nswe", padx=5)
+        
+        self.lbl_minmax = ctk.CTkLabel(self.mid_frame, text="Min: -- | Max: --", font=("Roboto Mono", 12), text_color="#aaaaaa")
+        self.lbl_minmax.pack(anchor="center", pady=(2, 0))
+        
+        self.lbl_last_seen = ctk.CTkLabel(self.mid_frame, text="", font=("Roboto Mono", 12), text_color="#ffaa00")
+        self.lbl_last_seen.pack(anchor="center", pady=(0, 2))
+
+        # -- 3. Stats (Compact) --
+        self.stats_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.stats_frame.grid(row=0, column=3, rowspan=2, sticky="nswe", padx=10)
+        
+        self.lbl_sent = ctk.CTkLabel(self.stats_frame, text="S:0 R:0", font=("Roboto Mono", 12), text_color="#dddddd")
+        self.lbl_sent.pack(anchor="center")
+        
+        self.lbl_loss = ctk.CTkLabel(self.stats_frame, text="Loss: 0%", font=("Roboto Mono", 12, "bold"), text_color="#dddddd")
+        self.lbl_loss.pack(anchor="center")
+
+        # -- 4. Latency (Current) --
+        self.lbl_latency = ctk.CTkLabel(self, text="--ms", font=("Roboto", 24, "bold"), text_color="#ffffff")
+        self.lbl_latency.grid(row=0, column=4, rowspan=2, padx=15, sticky="e")
 
         # -- 5. Delete Button --
-        self.btn_delete = ctk.CTkButton(self, text="×", width=35, height=35, 
+        self.btn_delete = ctk.CTkButton(self, text="×", width=25, height=25, 
                                         fg_color="transparent", hover_color="#8b0000", 
-                                        font=("Arial", 24), command=self._on_delete, text_color="#555555")
-        self.btn_delete.grid(row=0, column=4, rowspan=2, padx=(5, 15), sticky="e")
-
-        # Resolve IP in background
+                                        font=("Arial", 20), command=self._on_delete, text_color="#555555")
+        self.btn_delete.grid(row=0, column=5, rowspan=2, padx=(5, 10), sticky="e")
+        
         threading.Thread(target=self._resolve_ip, daemon=True).start()
+
+    def _resolve_ip(self):
+        pass
 
     def _on_delete(self):
         if self.remove_callback:
-            self.remove_callback(self.host)
-
-    def _resolve_ip(self):
-        try:
-            # simple blocking resolve
-            import socket
-            ip = socket.gethostbyname(self.host)
-            self.lbl_ip.configure(text=ip)
-        except:
-            self.lbl_ip.configure(text="IP Not Found")
+            self.remove_callback(self.target)
 
     def update_stats(self, stats: HostStats):
-        # 1. Status Color (Brighter Green/Red)
+        # 1. Status Color
         if stats.last_status == "Up":
-            self.status_indicator.configure(text_color="#00ff7f") # SpringGreen
-            self.configure(border_color="#004400") # Subtle border hint
+            self.status_indicator.configure(text_color="#00ff7f") 
+            self.configure(border_color="#00ff7f", fg_color="#0a0a0a")
+            self.lbl_last_seen.configure(text="") # Clear when up
         elif stats.last_status == "Down":
-            self.status_indicator.configure(text_color="#ff0000") # Pure Red
-            self.configure(border_color="#440000") # Subtle border hint
+            self.status_indicator.configure(text_color="#ff0000") 
+            self.configure(border_color="#ff0000")
+            
+            # Update Last Seen
+            if stats.last_seen_epoch:
+                dt = datetime.fromtimestamp(stats.last_seen_epoch)
+                self.lbl_last_seen.configure(text=f"Last Seen: {dt.strftime('%H:%M:%S')}")
+            else:
+                self.lbl_last_seen.configure(text="Last Seen: Never")
         else:
             self.status_indicator.configure(text_color="gray30")
-            self.configure(border_color="#222222")
+            self.configure(border_color="#222222", fg_color="#0a0a0a")
 
-        # 2. Uptime
-        self.lbl_uptime.configure(text=f"Uptime: {stats.uptime_percent():.1f}%")
+        # 2. Min/Max
+        min_s = f"{stats.latency_min_ms:.0f}" if stats.latency_min_ms is not None else "--"
+        max_s = f"{stats.latency_max_ms:.0f}" if stats.latency_max_ms is not None else "--"
+        self.lbl_minmax.configure(text=f"Min: {min_s}ms | Max: {max_s}ms")
 
         # 3. Stats
-        self.lbl_sent.configure(text=f"S: {stats.sent} | R: {stats.received}")
-        
+        self.lbl_sent.configure(text=f"S:{stats.sent} R:{stats.received}")
         loss = stats.loss_percent()
         loss_color = "#dddddd"
         if loss > 0: loss_color = "#ffaa00"
         if loss >= 50: loss_color = "#ff3333"
-        self.lbl_loss.configure(text=f"Loss: {loss:.1f}%", text_color=loss_color)
+        self.lbl_loss.configure(text=f"Loss: {loss:.0f}%", text_color=loss_color)
 
         # 4. Latency
         if stats.last_latency_ms is not None:
-            self.lbl_latency.configure(text=f"{stats.last_latency_ms:.1f} ms", text_color="#ffffff")
+            self.lbl_latency.configure(text=f"{stats.last_latency_ms:.0f}ms", text_color="#ffffff")
         else:
-            self.lbl_latency.configure(text="-- ms", text_color="#555555")
+            self.lbl_latency.configure(text="--ms", text_color="#555555")
+
+    def blink(self, on: bool):
+        if on:
+            self.configure(fg_color="#330000") 
+        else:
+            self.configure(fg_color="#0a0a0a") 
 
 
 class GraphPanel(ctk.CTkFrame):
@@ -138,81 +175,83 @@ class GraphPanel(ctk.CTkFrame):
     def __init__(self, master, *args, **kwargs):
         super().__init__(master, fg_color="#050505", corner_radius=0, *args, **kwargs)
         
-        self.canvas_height = 200 # Fixed height for now
+        self.canvas_height = 250 
         self.canvas = ctk.CTkCanvas(self, height=self.canvas_height, bg="#050505", highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True, padx=10, pady=10)
+        self.canvas.pack(fill="both", expand=True, padx=0, pady=0) 
         
         self.colors = ["#00BFFF", "#32CD32", "#FFD700", "#FF4500", "#BA55D3", "#00FA9A", "#FF69B4"]
         self.host_colors = {}
         
-    def update_graph(self, stats_map: Dict[str, HostStats]):
+    def update_graph(self, stats_map: Dict[str, HostStats], host_aliases: Dict[str, str]):
         self.canvas.delete("all")
         
         width = self.canvas.winfo_width()
-        height = self.canvas_height
-        if width < 50: return # not rendered yet
+        height = self.canvas.winfo_height() if self.canvas.winfo_height() > 10 else self.canvas_height
+        if width < 50: return 
 
         # Draw grid lines
         self.canvas.create_line(0, height/2, width, height/2, fill="#222222", dash=(2, 4))
         self.canvas.create_line(0, height/4, width, height/4, fill="#222222", dash=(1, 4))
         self.canvas.create_line(0, 3*height/4, width, 3*height/4, fill="#222222", dash=(1, 4))
 
-        # Assign colors
-        for i, host in enumerate(stats_map.keys()):
-            if host not in self.host_colors:
-                self.host_colors[host] = self.colors[i % len(self.colors)]
-
-        # Find global max latency for scaling
+        # Check bounds
         all_values = []
         for s in stats_map.values():
             for _, v in s.history:
-                if v is not None: all_values.append(v)
+                if v is not None: 
+                    all_values.append(v)
         
-        if not all_values: return
+        max_val = 100 
+        if all_values:
+            actual_max = max(all_values)
+            if actual_max > max_val: max_val = actual_max
         
-        max_val = max(all_values)
-        if max_val < 50: max_val = 50 # Minimum scale 50ms
+        # Legend drawing area (Top Left) - HORIZONTAL
+        legend_x = 10
+        legend_y = 10
+        legend_spacing = 15 
         
-        # Draw lines for each host
-        for host, stats in stats_map.items():
+        # Draw lines
+        sorted_hosts = sorted(stats_map.keys())
+        current_legend_x = legend_x
+        
+        for i, host in enumerate(sorted_hosts):
+            if host not in self.host_colors:
+                self.host_colors[host] = self.colors[i % len(self.colors)]
             color = self.host_colors[host]
+            
+            # 1. Draw Legend Item
+            alias = host_aliases.get(host, host)
+            text_id = self.canvas.create_text(current_legend_x, legend_y, text=f"■ {alias}", fill=color, anchor="w", font=("Arial", 11, "bold"))
+            
+            bbox = self.canvas.bbox(text_id)
+            if bbox:
+                text_width = bbox[2] - bbox[0]
+                current_legend_x += text_width + legend_spacing
+
+            # 2. Draw Line
+            stats = stats_map[host]
             history = list(stats.history)
             if len(history) < 2: continue
-            
-            # X scaling: Fixed window size (HISTORY_MAX points)
-            # Or simplified: spread points across width
-            # For consistent scrolling, we might want fixed 5px per point?
-            # Let's map HISTORY_MAX points to width
             
             step_x = width / (len(history) - 1)
             coords = []
             
-            for i, (_, val) in enumerate(history):
-                x = i * step_x
+            for j, (_, val) in enumerate(history):
+                x = j * step_x
                 if val is None:
-                    coords.append(None)
+                    y = height 
                 else:
-                    # Invert Y
-                    y = height - ((val / max_val) * (height - 10)) - 5
-                    coords.append((x, y))
+                    y = height - ((val / max_val) * (height - 30)) - 10 
+                coords.append((x, y))
             
-            current_line = []
-            for p in coords:
-                if p is None:
-                    if len(current_line) >= 4:
-                        self.canvas.create_line(current_line, fill=color, width=2, smooth=True)
-                    current_line = []
-                else:
-                    current_line.append(p[0])
-                    current_line.append(p[1])
+            points = []
+            for x, y in coords:
+                points.append(x)
+                points.append(y)
             
-            if len(current_line) >= 4:
-                self.canvas.create_line(current_line, fill=color, width=2, smooth=True)
-                
-            # Draw legend name at last point if exists
-            if coords[-1] is not None:
-                lx, ly = coords[-1]
-                self.canvas.create_text(lx - 5, ly - 10, text=host, fill=color, anchor="se", font=("Arial", 10))
+            if len(points) >= 4:
+                self.canvas.create_line(points, fill=color, width=2, smooth=True)
 
 
 class PingApp(ctk.CTk):
@@ -223,7 +262,12 @@ class PingApp(ctk.CTk):
         
         # Data
         self.manager = PingManager()
-        self.hosts_map: Dict[str, HostCard] = {} # host -> CardWidget
+        self.hosts_map: Dict[str, HostCard] = {} 
+        self.host_aliases: Dict[str, str] = {}
+        
+        self.toplevel_add_host = None
+        self.toplevel_about = None
+        self.sidebar_expanded = True
         
         # Setup UI
         self._build_layout()
@@ -233,7 +277,7 @@ class PingApp(ctk.CTk):
         
         # Start timer
         self.after(100, self._process_queue)
-        self.after(500, self._blink_alert) # Global alert blinker
+        self.after(500, self._blink_logic)
         
         # Handle close
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -241,95 +285,126 @@ class PingApp(ctk.CTk):
         self.alert_state = False
 
     def _build_layout(self):
-        # Grid Layout: 2 rows (Main, Graph), 2 columns (Sidebar, Content)
-        self.grid_rowconfigure(0, weight=3) # Main list
-        self.grid_rowconfigure(1, weight=1) # Graph panel
+        self.grid_rowconfigure(0, weight=1) 
         self.grid_columnconfigure(1, weight=1)
 
         # -- Sidebar --
         self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color="#181818")
-        self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
-        self.sidebar.grid_rowconfigure(5, weight=1)
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_propagate(False) 
+        self.sidebar.grid_rowconfigure(6, weight=1) 
         
-        self.logo_label = ctk.CTkLabel(self.sidebar, text="PING\nMonitor", font=ctk.CTkFont(size=26, weight="bold"))
-        self.logo_label.grid(row=0, column=0, padx=20, pady=(30, 20))
+        # Sidebar Content
+        self.sidebar_content = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        self.sidebar_content.pack(fill="both", expand=True)
+        
+        self.btn_toggle = ctk.CTkButton(self.sidebar_content, text="☰", width=40, command=self._toggle_sidebar, fg_color="transparent")
+        self.btn_toggle.pack(anchor="w", padx=10, pady=10)
+        
+        self.lbl_logo = ctk.CTkLabel(self.sidebar_content, text="PING\nMonitor", font=ctk.CTkFont(size=26, weight="bold"))
+        self.lbl_logo.pack(pady=(10, 20))
 
-        # Action Buttons
-        button_style = {"height": 40, "corner_radius": 8, "font": ("Roboto", 14)}
-        self.btn_add = ctk.CTkButton(self.sidebar, text="Add Host", command=self._on_add_host, **button_style)
-        self.btn_add.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        # Buttons
+        btn_style = {"height": 40, "corner_radius": 8, "font": ("Roboto", 14)}
+        
+        self.btn_add = ctk.CTkButton(self.sidebar_content, text="Add Host", command=self._on_add_host_dialog, **btn_style)
+        self.btn_add.pack(padx=20, pady=10, fill="x")
 
-        self.btn_interval = ctk.CTkButton(self.sidebar, text="Set Interval", command=self._on_set_interval,
+        self.btn_interval = ctk.CTkButton(self.sidebar_content, text="Set Interval", command=self._on_set_interval,
                                           fg_color="transparent", border_width=1, border_color="gray40", 
-                                          hover_color="#333333", **button_style)
-        self.btn_interval.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+                                          hover_color="#333333", **btn_style)
+        self.btn_interval.pack(padx=20, pady=10, fill="x")
         
-        self.btn_export = ctk.CTkButton(self.sidebar, text="Export CSV", command=self._on_export,
+        self.btn_export = ctk.CTkButton(self.sidebar_content, text="Export CSV", command=self._on_export,
                                           fg_color="transparent", border_width=1, border_color="gray40", 
-                                          hover_color="#333333", **button_style)
-        self.btn_export.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
+                                          hover_color="#333333", **btn_style)
+        self.btn_export.pack(padx=20, pady=10, fill="x")
 
-        self.btn_about = ctk.CTkButton(self.sidebar, text="About / Yvexa", command=self._on_about, 
-                                       hover_color="#333333", fg_color="transparent", text_color="#3b8ed0")
-        self.btn_about.grid(row=6, column=0, padx=20, pady=(10, 20))
+        # Spacer
+        self.btn_about = ctk.CTkButton(self.sidebar_content, text="About", command=self._on_about, 
+                                       hover_color="#333333", fg_color="#222222", border_width=1, border_color="#333333", text_color="#3b8ed0", **btn_style)
+        self.btn_about.pack(side="bottom", padx=20, pady=20, fill="x")
         
-        # -- Main Area --
-        # Header with Alert
-        self.header_frame = ctk.CTkFrame(self, height=50, corner_radius=0, fg_color="#111111")
-        self.header_frame.grid(row=0, column=1, sticky="new") # Overlay on top row? No, create a sub-frame
-        # Actually easier to put header inside Main Grid
+        # -- Main Content Area --
+        self.main_area = ctk.CTkFrame(self, fg_color="#000000", corner_radius=0)
+        self.main_area.grid(row=0, column=1, sticky="nsew")
         
-        # Let's adjust grid:
-        # Row 0: Hosts List (contains header)
-        # Row 1: Graph Panel
-        
-        self.main_container = ctk.CTkFrame(self, fg_color="#000000", corner_radius=0)
-        self.main_container.grid(row=0, column=1, sticky="nsew")
-        self.main_container.grid_rowconfigure(1, weight=1)
-        self.main_container.grid_columnconfigure(0, weight=1)
+        # Sub-Grid
+        self.main_area.grid_rowconfigure(1, weight=1) 
+        self.main_area.grid_columnconfigure(0, weight=1)
 
-        # Dashboard Header
-        self.dash_head = ctk.CTkFrame(self.main_container, fg_color="transparent", height=60)
-        self.dash_head.grid(row=0, column=0, sticky="ew", padx=20, pady=10)
+        # 1. Header
+        self.header_frame = ctk.CTkFrame(self.main_area, fg_color="transparent", height=50)
+        self.header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=5)
         
-        self.lbl_title = ctk.CTkLabel(self.dash_head, text="Dashboard", font=("Roboto", 24, "bold"))
+        self.lbl_title = ctk.CTkLabel(self.header_frame, text="Dashboard", font=("Roboto", 24, "bold"))
         self.lbl_title.pack(side="left")
         
-        self.lbl_alert = ctk.CTkLabel(self.dash_head, text="⬤ HEALTHY", font=("Roboto", 16, "bold"), text_color="#00ff7f")
-        self.lbl_alert.pack(side="right", padx=10)
+        self.lbl_status = ctk.CTkLabel(self.header_frame, text="⬤ HEALTHY", font=("Roboto", 16, "bold"), text_color="#00ff7f")
+        self.lbl_status.pack(side="right", padx=10)
 
-        # Host List
-        self.scroll_frame = ctk.CTkScrollableFrame(self.main_container, fg_color="transparent", label_text="")
-        self.scroll_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        # 2. Host List
+        self.scroll_frame = ctk.CTkScrollableFrame(self.main_area, fg_color="transparent", label_text="")
+        self.scroll_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 0))
         self.scroll_frame.grid_columnconfigure(0, weight=1)
+        
+        # 3. Warning Banner (between List and Graph)
+        self.warning_banner = ctk.CTkFrame(self.main_area, fg_color="#ff0000", height=0, corner_radius=0)
+        self.warning_banner.grid(row=2, column=0, sticky="ew")
+        self.lbl_warning = ctk.CTkLabel(self.warning_banner, text="⚠️ SYSTEM ALERT: ONE OR MORE HOSTS DOWN", font=("Roboto", 18, "bold"), text_color="white")
+        self.lbl_warning.pack(pady=5)
+        self.warning_banner.grid_remove() # Hide initially
 
-        # -- Graph Panel (Row 1) --
-        self.graph_panel = GraphPanel(self)
-        self.graph_panel.grid(row=1, column=1, sticky="nsew", padx=0, pady=0)
+        # 4. Graph Panel (Bottom)
+        self.graph_panel = GraphPanel(self.main_area)
+        self.graph_panel.grid(row=3, column=0, sticky="ew", padx=0, pady=0)
 
-    def _blink_alert(self):
-        # Check if any host is Down
+    def _toggle_sidebar(self):
+        self.lbl_logo.pack_forget()
+        self.btn_add.pack_forget()
+        self.btn_interval.pack_forget()
+        self.btn_export.pack_forget()
+        self.btn_about.pack_forget()
+        
+        if self.sidebar_expanded:
+            self.sidebar.configure(width=50)
+            self.sidebar_expanded = False
+        else:
+            self.sidebar.configure(width=220)
+            self.sidebar_expanded = True
+            
+            self.lbl_logo.pack(pady=(10, 20), after=self.btn_toggle)
+            self.btn_add.pack(padx=20, pady=10, fill="x", after=self.lbl_logo)
+            self.btn_interval.pack(padx=20, pady=10, fill="x", after=self.btn_add)
+            self.btn_export.pack(padx=20, pady=10, fill="x", after=self.btn_interval)
+            self.btn_about.pack(side="bottom", padx=20, pady=20, fill="x")
+
+    def _blink_logic(self):
+        self.alert_state = not self.alert_state
         any_down = False
         stats_snapshot = self.manager.stats_snapshot()
-        for stats in stats_snapshot.values():
+        
+        for target, stats in stats_snapshot.items():
             if stats.last_status == "Down":
                 any_down = True
-                break
+                if target in self.hosts_map:
+                    self.hosts_map[target].blink(self.alert_state)
+            else:
+                if target in self.hosts_map: 
+                    self.hosts_map[target].blink(False)
         
         if any_down:
-            self.alert_state = not self.alert_state
-            color = "#ff0000" if self.alert_state else "#550000"
-            self.lbl_alert.configure(text="⚠️ SYSTEM ALERT", text_color=color)
+            self.warning_banner.grid() 
+            banner_bg = "#ff0000" if self.alert_state else "#880000"
+            self.warning_banner.configure(fg_color=banner_bg)
+            self.lbl_status.configure(text="CRITICAL", text_color="#ff0000")
         else:
-            self.lbl_alert.configure(text="⬤ HEALTHY", text_color="#00ff7f")
+            self.warning_banner.grid_remove() 
+            self.lbl_status.configure(text="⬤ HEALTHY", text_color="#00ff7f")
             
-        self.after(500, self._blink_alert)
+        self.after(500, self._blink_logic)
 
     def _process_queue(self):
-        """Consume all updates from manager queue"""
-        # Also limit updates to Graph to avoid lag? For now update every cycle if needed
-        # Or update graph every 500ms separately
-        
         needs_graph_update = False
         try:
             while True:
@@ -341,45 +416,68 @@ class PingApp(ctk.CTk):
             pass
         
         if needs_graph_update:
-            self.graph_panel.update_graph(self.manager.stats_snapshot())
+            self.graph_panel.update_graph(self.manager.stats_snapshot(), self.host_aliases)
         
-        # Schedule next check
         self.after(100, self._process_queue)
 
-    def _add_host_card(self, host: str):
-        if host in self.hosts_map:
+    def _add_host_card(self, target: str, name: str):
+        if target in self.hosts_map:
             return
         
-        card = HostCard(self.scroll_frame, host=host, remove_callback=self._remove_host_request)
-        card.grid(row=len(self.hosts_map), column=0, padx=5, pady=5, sticky="ew")
-        self.hosts_map[host] = card
+        card = HostCard(self.scroll_frame, name=name, target=target, remove_callback=self._remove_host_request)
+        card.grid(row=len(self.hosts_map), column=0, padx=5, pady=2, sticky="ew")
+        self.hosts_map[target] = card
+        self.host_aliases[target] = name
         
-        # Start monitoring
-        self.manager.add_host(host)
+        self.manager.add_host(target)
 
-    def _remove_host_request(self, host: str):
-        if host in self.hosts_map:
-            card = self.hosts_map.pop(host)
+    def _remove_host_request(self, target: str):
+        if target in self.hosts_map:
+            card = self.hosts_map.pop(target)
             card.destroy()
-            self.manager.remove_host(host)
+            self.manager.remove_host(target)
+            self.host_aliases.pop(target, None)
             
-            # Re-pack grid
             for i, (h, c) in enumerate(self.hosts_map.items()):
-                c.grid(row=i, column=0, padx=5, pady=5, sticky="ew")
+                c.grid(row=i, column=0, padx=5, pady=2, sticky="ew")
 
-    # ... Other methods same as before ...
-    def _on_add_host(self):
-        dialog = ctk.CTkInputDialog(text="Enter Hostname or IP:", title="Add Host")
-        host = dialog.get_input()
-        if host:
-            host = host.strip()
-            if "://" in host:
-                try:
-                    parsed = urlparse(host)
-                    host = parsed.netloc or parsed.path
-                except: pass
-            if host:
-                self._add_host_card(host)
+    def _on_add_host_dialog(self):
+        if self.toplevel_add_host is None or not self.toplevel_add_host.winfo_exists():
+            self.toplevel_add_host = ctk.CTkToplevel(self)
+            self.toplevel_add_host.title("Add Host")
+            self.toplevel_add_host.geometry("300x240") 
+            self.toplevel_add_host.resizable(False, False)
+            self.toplevel_add_host.lift()
+            self.toplevel_add_host.focus_force()
+            self.toplevel_add_host.attributes("-topmost", True) 
+            
+            ctk.CTkLabel(self.toplevel_add_host, text="Display Name:").pack(pady=(10, 0))
+            entry_name = ctk.CTkEntry(self.toplevel_add_host)
+            entry_name.pack(pady=5)
+            
+            ctk.CTkLabel(self.toplevel_add_host, text="Hostname / IP:").pack(pady=(10, 0))
+            entry_target = ctk.CTkEntry(self.toplevel_add_host)
+            entry_target.pack(pady=5)
+            
+            def _confirm():
+                name = entry_name.get().strip()
+                target = entry_target.get().strip()
+                if target:
+                    if not name: name = target
+                    if "://" in target:
+                        try:
+                            p = urlparse(target)
+                            target = p.netloc or p.path
+                        except: pass
+                    
+                    self._add_host_card(target, name)
+                    self.toplevel_add_host.destroy()
+                    self.toplevel_add_host = None
+                    
+            ctk.CTkButton(self.toplevel_add_host, text="Add", command=_confirm).pack(pady=20)
+        else:
+            self.toplevel_add_host.lift()
+            self.toplevel_add_host.focus_force()
 
     def _on_set_interval(self):
         dialog = ctk.CTkInputDialog(text="Enter Ping Interval (seconds):", title="Settings")
@@ -398,60 +496,92 @@ class PingApp(ctk.CTk):
         if not filename: return
         try:
             with open(filename, "w", encoding="utf-8") as f:
-                f.write("Host,Status,Last_Latency_ms,Loss_%,Uptime_%\n")
-                for h, s in self.manager.stats_snapshot().items():
-                    f.write(f"{h},{s.last_status},{s.last_latency_ms},{s.loss_percent()},{s.uptime_percent()}\n")
+                f.write("Name,Target,Status,Last_Latency_ms,Loss_%\n")
+                for target, s in self.manager.stats_snapshot().items():
+                    name = self.host_aliases.get(target, target)
+                    f.write(f"{name},{target},{s.last_status},{s.last_latency_ms},{s.loss_percent()}\n")
         except Exception: pass
 
     def _on_about(self):
-        top = ctk.CTkToplevel(self)
-        top.title("About")
-        top.geometry("400x520")
-        top.resizable(False, False)
-        top.lift()
-        top.focus_force()
+        if self.toplevel_about is None or not self.toplevel_about.winfo_exists():
+            self.toplevel_about = ctk.CTkToplevel(self)
+            self.toplevel_about.title("About")
+            self.toplevel_about.geometry("400x520")
+            self.toplevel_about.resizable(False, False)
+            self.toplevel_about.lift()
+            self.toplevel_about.focus_force()
+            self.toplevel_about.attributes("-topmost", True) 
 
-        lbl_title = ctk.CTkLabel(top, text="Ping Monitor", font=("Arial", 28, "bold"))
-        lbl_title.pack(pady=(30, 10))
-        
-        lbl_ver = ctk.CTkLabel(top, text="v2.1 Dark Edition", text_color="gray")
-        lbl_ver.pack(pady=(0, 20))
-        
-        lbl_cred = ctk.CTkLabel(top, text="Created by Yvexa", font=("Arial", 18))
-        lbl_cred.pack()
-        
-        lbl_link = ctk.CTkLabel(top, text="Yvexa.dev", font=("Arial", 16), text_color="#3b8ed0", cursor="hand2")
-        lbl_link.pack(pady=(0, 20))
-        lbl_link.bind("<Button-1>", lambda e: os.startfile("https://yvexa.dev") if os.name == 'nt' else None)
+            lbl_title = ctk.CTkLabel(self.toplevel_about, text="Ping Monitor", font=("Arial", 28, "bold"))
+            lbl_title.pack(pady=(30, 10))
+            
+            lbl_ver = ctk.CTkLabel(self.toplevel_about, text="v2.3 Platinum", text_color="gray")
+            lbl_ver.pack(pady=(0, 20))
+            
+            lbl_cred = ctk.CTkLabel(self.toplevel_about, text="Created by Yvexa", font=("Arial", 18))
+            lbl_cred.pack()
+            
+            lbl_link = ctk.CTkLabel(self.toplevel_about, text="Yvexa.dev", font=("Arial", 16), text_color="#3b8ed0", cursor="hand2")
+            lbl_link.pack(pady=(0, 20))
+            lbl_link.bind("<Button-1>", lambda e: os.startfile("https://yvexa.dev") if os.name == 'nt' else None)
 
-        qr_path = resource_path("qr.png")
-        if os.path.exists(qr_path):
-            try:
-                pil_img = Image.open(qr_path)
-                pil_img = pil_img.resize((200, 200), Image.Resampling.LANCZOS)
-                img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(200, 200))
-                lbl_img = ctk.CTkLabel(top, image=img, text="")
-                lbl_img.pack(pady=10)
-            except: pass
+            qr_path = resource_path("qr.png")
+            if os.path.exists(qr_path):
+                try:
+                    pil_img = Image.open(qr_path)
+                    pil_img = pil_img.resize((200, 200), Image.Resampling.LANCZOS)
+                    img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(200, 200))
+                    lbl_img = ctk.CTkLabel(self.toplevel_about, image=img, text="")
+                    lbl_img.pack(pady=10)
+                except: pass
+            else:
+                ctk.CTkLabel(self.toplevel_about, text="(qr.png not found)").pack()
         else:
-            ctk.CTkLabel(top, text="(qr.png not found)").pack()
+            self.toplevel_about.lift()
+            self.toplevel_about.focus_force()
 
     def _load_hosts(self):
-        path = resource_path("hosts.json")
+        # 1. Try Persistence dir
+        data_dir = get_user_data_dir()
+        path = os.path.join(data_dir, "hosts.json")
+        
+        # 2. If not found, try local resource fallback (migration)
+        if not os.path.exists(path):
+            local_path = resource_path("hosts.json")
+            if os.path.exists(local_path):
+                try:
+                    with open(local_path, "r") as f:
+                        data = json.load(f)
+                    # Migrate to persistence
+                    with open(path, "w") as f:
+                        json.dump(data, f, indent=2)
+                except: pass
+
+        # 3. Load from persistence
         if os.path.exists(path):
             try:
                 with open(path, "r") as f:
-                    hosts = json.load(f)
-                    for h in hosts:
-                        self._add_host_card(h)
+                    data = json.load(f)
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, str):
+                            self._add_host_card(item, item)
+                        elif isinstance(item, dict):
+                            self._add_host_card(item.get("target"), item.get("name", item.get("target")))
             except: pass
 
     def _save_hosts(self):
-        hosts = list(self.hosts_map.keys())
-        path = resource_path("hosts.json")
+        data = []
+        for target in self.hosts_map.keys():
+            name = self.host_aliases.get(target, target)
+            data.append({"name": name, "target": target})
+        
+        data_dir = get_user_data_dir()
+        path = os.path.join(data_dir, "hosts.json")
+        
         try:
             with open(path, "w") as f:
-                json.dump(hosts, f, indent=2)
+                json.dump(data, f, indent=2)
         except: pass
 
     def _on_close(self):

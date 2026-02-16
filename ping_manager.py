@@ -16,7 +16,7 @@ LATENCY_REGEXES = [
 ]
 
 # Number of history points to keep per-host (used for sparkline graph)
-HISTORY_MAX = 120
+HISTORY_MAX = 3000
 
 
 @dataclass
@@ -222,7 +222,8 @@ class PingManager:
                         latency_max_ms=s.latency_max_ms,
                         latency_sum_ms=s.latency_sum_ms,
                         latency_count=s.latency_count,
-                        history=deque(list(s.history), maxlen=HISTORY_MAX),
+                        # Return the history deque directly, as it's already a copy with maxlen
+                        history=s.history,
                     )
                     out[h] = copy_stats
                 except Exception:
