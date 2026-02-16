@@ -57,17 +57,20 @@ class HostCard(ctk.CTkFrame):
         self.remove_callback = remove_callback
         self.blink_state = False
         
-        # Grid layout - Optimized for width
-        # Col 0: Status Dot
-        # Col 1: Name/Target (Left) - Weight 1
-        # Col 2: Min/Max & Last Seen (Center) - Weight 1
-        # Col 3: Stats (Center) - Weight 1
-        # Col 4: Latency (Right)
-        # Col 5: Delete (Far Right)
+        # Grid layout - Optimized for alignment
+        # Col 0: Status Dot (Fixed)
+        # Col 1: Name/Target (Left) - Weight 1, Uniform 'a'
+        # Col 2: Min/Max & Last Seen (Center) - Weight 1, Uniform 'a'
+        # Col 3: Stats (Center) - Weight 1, Uniform 'a'
+        # Col 4: Latency (Right) - Fixed/Weight 0
+        # Col 5: Delete (Far Right) - Fixed/Weight 0
         
-        self.grid_columnconfigure(1, weight=1) 
-        self.grid_columnconfigure(2, weight=1)
-        self.grid_columnconfigure(3, weight=1)
+        self.grid_columnconfigure(0, weight=0, minsize=40)
+        self.grid_columnconfigure(1, weight=1, uniform="col") 
+        self.grid_columnconfigure(2, weight=1, uniform="col")
+        self.grid_columnconfigure(3, weight=1, uniform="col")
+        self.grid_columnconfigure(4, weight=0, minsize=100)
+        self.grid_columnconfigure(5, weight=0, minsize=40)
 
         # -- 0. Status Indicator --
         self.status_indicator = ctk.CTkLabel(self, text="●", font=("Arial", 28), text_color="gray")
@@ -85,8 +88,10 @@ class HostCard(ctk.CTkFrame):
 
         # -- 2. Min/Max & Last Seen --
         self.mid_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.mid_frame.grid(row=0, column=2, rowspan=2, sticky="nswe", padx=5)
+        self.mid_frame.grid(row=0, column=2, rowspan=2, sticky="nswe", padx=5) # sticky nswe ensures full width
         
+        # Use simple pack labels but maybe left align for consistency?
+        # Center is fine if col width is consistent.
         self.lbl_minmax = ctk.CTkLabel(self.mid_frame, text="Min: -- | Max: --", font=("Roboto Mono", 12), text_color="#aaaaaa")
         self.lbl_minmax.pack(anchor="center", pady=(2, 0))
         
