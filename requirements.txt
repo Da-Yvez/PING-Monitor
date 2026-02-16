@@ -1,0 +1,26 @@
+# PING Monitor - Python Dependencies
+
+# ============================================
+# Runtime Dependencies
+# ============================================
+# This application uses only Python standard library modules.
+# No external packages are required for basic functionality.
+
+# Note: tkinter is included with standard Python installations.
+# On some Linux distributions, you may need to install it separately:
+#   - Ubuntu/Debian: sudo apt-get install python3-tk
+#   - Fedora: sudo dnf install python3-tkinter
+#   - Arch: sudo pacman -S tk
+
+# ============================================
+# Development Dependencies
+# ============================================
+# Uncomment these if you want to build executables or contribute to development
+
+# PyInstaller for creating standalone executables
+# pyinstaller>=5.0.0
+
+# Code quality tools (optional)
+# pylint>=2.0.0
+# black>=22.0.0
+# mypy>=0.900
