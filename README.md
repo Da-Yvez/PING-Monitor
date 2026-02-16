@@ -1,6 +1,6 @@
 # PING Monitor
 
-A powerful, real-time network monitoring application built with Python and CustomTkinter that continuously monitors the availability and latency of multiple hosts simultaneously.
+A powerful, real-time network monitoring application built with Python and CustomTkinter that continuously monitors the availability and latency of multiple hosts simultaneously. 
 
 **Developed by [Yvexa](https://yvexa.dev) - Premium Web Development & Design Agency**
 
