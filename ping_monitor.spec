@@ -47,11 +47,11 @@ exe = EXE(
     version_info={
         'CompanyName': 'Yvexa',
         'FileDescription': 'Ping Monitor - Network Monitoring Tool',
-        'FileVersion': '3.0.0.0',
+        'FileVersion': '4.0.0.0',
         'InternalName': 'PingMonitor',
         'LegalCopyright': ' 2026 Yvexa. All rights reserved.',
         'OriginalFilename': 'Ping Monitor.exe',
         'ProductName': 'Ping Monitor',
-        'ProductVersion': '3.0.0.0',
+        'ProductVersion': '4.0.0.0',
     }
 )

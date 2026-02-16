@@ -69,17 +69,17 @@ class HostCard(ctk.CTkFrame):
         # 8: MS
         # 9: Delete Button
         
-        # Distribute space: minsizes for alignment, weights for responsiveness
-        self.grid_columnconfigure(0, weight=0, minsize=40, uniform="edge")  # Status (fixed)
-        self.grid_columnconfigure(1, weight=3, minsize=200, uniform="host") # Name + IP (expandable)
-        self.grid_columnconfigure(2, weight=1, minsize=80, uniform="data")  # Min (expandable)
-        self.grid_columnconfigure(3, weight=1, minsize=80, uniform="data")  # Max (expandable)
-        self.grid_columnconfigure(4, weight=1, minsize=100, uniform="data") # Last Seen (expandable)
-        self.grid_columnconfigure(5, weight=1, minsize=80, uniform="data")  # Send (expandable)
-        self.grid_columnconfigure(6, weight=1, minsize=90, uniform="data")  # Recv (expandable)
-        self.grid_columnconfigure(7, weight=1, minsize=80, uniform="data")  # Loss (expandable)
-        self.grid_columnconfigure(8, weight=1, minsize=100, uniform="data") # MS (expandable)
-        self.grid_columnconfigure(9, weight=0, minsize=40, uniform="edge")  # Delete (fixed)
+        # Distribute space: Weight 1 for data cols, Weight 2 for Host info
+        self.grid_columnconfigure(0, weight=0, minsize=40)  # Status
+        self.grid_columnconfigure(1, weight=2)              # Name + IP
+        self.grid_columnconfigure(2, weight=1)              # Min
+        self.grid_columnconfigure(3, weight=1)              # Max
+        self.grid_columnconfigure(4, weight=1)              # Last Seen
+        self.grid_columnconfigure(5, weight=1)              # Send
+        self.grid_columnconfigure(6, weight=1)              # Recv
+        self.grid_columnconfigure(7, weight=1)              # Loss
+        self.grid_columnconfigure(8, weight=1)              # MS
+        self.grid_columnconfigure(9, weight=0, minsize=40)  # Delete
 
         # Padding for inner elements to not overlap border
         p_y = 10 
@@ -91,7 +91,7 @@ class HostCard(ctk.CTkFrame):
         
         # -- 1. Host Info (Name/Target) --
         self.info_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.info_frame.grid(row=0, column=1, sticky="w", padx=p_x, pady=p_y)
+        self.info_frame.grid(row=0, column=1, sticky="ew", padx=p_x, pady=p_y)
         
         self.lbl_name = ctk.CTkLabel(self.info_frame, text=name, font=("Roboto", 15, "bold"), text_color="#ffffff")
         self.lbl_name.pack(anchor="w")
@@ -100,31 +100,31 @@ class HostCard(ctk.CTkFrame):
 
         # -- 2. Min --
         self.lbl_min = ctk.CTkLabel(self, text="--", font=("Roboto Mono", 14), text_color="#bbbbbb")
-        self.lbl_min.grid(row=0, column=2, padx=p_x, pady=p_y)
+        self.lbl_min.grid(row=0, column=2, padx=p_x, pady=p_y, sticky="ew")
 
         # -- 3. Max --
         self.lbl_max = ctk.CTkLabel(self, text="--", font=("Roboto Mono", 14), text_color="#bbbbbb")
-        self.lbl_max.grid(row=0, column=3, padx=p_x, pady=p_y)
+        self.lbl_max.grid(row=0, column=3, padx=p_x, pady=p_y, sticky="ew")
 
         # -- 4. Last Seen --
         self.lbl_last_seen = ctk.CTkLabel(self, text="--", font=("Roboto Mono", 12), text_color="#ffaa00")
-        self.lbl_last_seen.grid(row=0, column=4, padx=p_x, pady=p_y)
+        self.lbl_last_seen.grid(row=0, column=4, padx=p_x, pady=p_y, sticky="ew")
 
         # -- 5. Sent --
         self.lbl_sent = ctk.CTkLabel(self, text="0", font=("Roboto Mono", 14), text_color="#dddddd")
-        self.lbl_sent.grid(row=0, column=5, padx=p_x, pady=p_y)
+        self.lbl_sent.grid(row=0, column=5, padx=p_x, pady=p_y, sticky="ew")
 
         # -- 6. Recv --
         self.lbl_recv = ctk.CTkLabel(self, text="0", font=("Roboto Mono", 14), text_color="#dddddd")
-        self.lbl_recv.grid(row=0, column=6, padx=p_x, pady=p_y)
+        self.lbl_recv.grid(row=0, column=6, padx=p_x, pady=p_y, sticky="ew")
 
         # -- 7. Loss --
         self.lbl_loss = ctk.CTkLabel(self, text="0%", font=("Roboto Mono", 14, "bold"), text_color="#dddddd")
-        self.lbl_loss.grid(row=0, column=7, padx=p_x, pady=p_y)
+        self.lbl_loss.grid(row=0, column=7, padx=p_x, pady=p_y, sticky="ew")
 
         # -- 8. MS (Current) --
         self.lbl_latency = ctk.CTkLabel(self, text="--ms", font=("Roboto", 18, "bold"), text_color="#ffffff")
-        self.lbl_latency.grid(row=0, column=8, padx=p_x, pady=p_y)
+        self.lbl_latency.grid(row=0, column=8, padx=p_x, pady=p_y, sticky="ew")
 
         # -- 9. Delete Button --
         self.btn_delete = ctk.CTkButton(self, text="×", width=25, height=25, 
@@ -403,30 +403,30 @@ class PingApp(ctk.CTk):
         self.table_header = ctk.CTkFrame(self.main_area, fg_color="#111111", corner_radius=5, height=35)
         self.table_header.grid(row=1, column=0, sticky="ew", padx=10, pady=(5, 0))
         
-        # Configure Grid for Header (Must match HostCard exactly)
-        self.table_header.grid_columnconfigure(0, weight=0, minsize=40, uniform="edge")  # Status (fixed)
-        self.table_header.grid_columnconfigure(1, weight=3, minsize=200, uniform="host") # Name (expandable)
-        self.table_header.grid_columnconfigure(2, weight=1, minsize=80, uniform="data")  # Min (expandable)
-        self.table_header.grid_columnconfigure(3, weight=1, minsize=80, uniform="data")  # Max (expandable)
-        self.table_header.grid_columnconfigure(4, weight=1, minsize=100, uniform="data") # Last Seen (expandable)
-        self.table_header.grid_columnconfigure(5, weight=1, minsize=80, uniform="data")  # Send (expandable)
-        self.table_header.grid_columnconfigure(6, weight=1, minsize=90, uniform="data")  # Recv (expandable)
-        self.table_header.grid_columnconfigure(7, weight=1, minsize=80, uniform="data")  # Loss (expandable)
-        self.table_header.grid_columnconfigure(8, weight=1, minsize=100, uniform="data") # MS (expandable)
-        self.table_header.grid_columnconfigure(9, weight=0, minsize=40, uniform="edge")  # Delete (fixed)
+        # Configure Grid for Header (Must match HostCard)
+        self.table_header.grid_columnconfigure(0, weight=0, minsize=40)  # Status
+        self.table_header.grid_columnconfigure(1, weight=2)              # Name
+        self.table_header.grid_columnconfigure(2, weight=1)              # Min
+        self.table_header.grid_columnconfigure(3, weight=1)              # Max
+        self.table_header.grid_columnconfigure(4, weight=1)              # Last Seen
+        self.table_header.grid_columnconfigure(5, weight=1)              # Send
+        self.table_header.grid_columnconfigure(6, weight=1)              # Recv
+        self.table_header.grid_columnconfigure(7, weight=1)              # Loss
+        self.table_header.grid_columnconfigure(8, weight=1)              # MS
+        self.table_header.grid_columnconfigure(9, weight=0, minsize=40)  # Delete
         
         header_font = ("Roboto", 12, "bold")
         header_color = "#888888"
         
         ctk.CTkLabel(self.table_header, text="", width=40).grid(row=0, column=0) 
         ctk.CTkLabel(self.table_header, text="HOST", font=header_font, text_color=header_color, anchor="w").grid(row=0, column=1, sticky="w", padx=10)
-        ctk.CTkLabel(self.table_header, text="MIN", font=header_font, text_color=header_color).grid(row=0, column=2)
-        ctk.CTkLabel(self.table_header, text="MAX", font=header_font, text_color=header_color).grid(row=0, column=3)
-        ctk.CTkLabel(self.table_header, text="LAST SEEN", font=header_font, text_color=header_color).grid(row=0, column=4)
-        ctk.CTkLabel(self.table_header, text="SENT", font=header_font, text_color=header_color).grid(row=0, column=5)
-        ctk.CTkLabel(self.table_header, text="RECEIVED", font=header_font, text_color=header_color).grid(row=0, column=6)
-        ctk.CTkLabel(self.table_header, text="LOSS", font=header_font, text_color=header_color).grid(row=0, column=7)
-        ctk.CTkLabel(self.table_header, text="LATENCY", font=header_font, text_color=header_color).grid(row=0, column=8)
+        ctk.CTkLabel(self.table_header, text="MIN", font=header_font, text_color=header_color).grid(row=0, column=2, sticky="ew")
+        ctk.CTkLabel(self.table_header, text="MAX", font=header_font, text_color=header_color).grid(row=0, column=3, sticky="ew")
+        ctk.CTkLabel(self.table_header, text="LAST SEEN", font=header_font, text_color=header_color).grid(row=0, column=4, sticky="ew")
+        ctk.CTkLabel(self.table_header, text="SENT", font=header_font, text_color=header_color).grid(row=0, column=5, sticky="ew")
+        ctk.CTkLabel(self.table_header, text="RECEIVED", font=header_font, text_color=header_color).grid(row=0, column=6, sticky="ew")
+        ctk.CTkLabel(self.table_header, text="LOSS", font=header_font, text_color=header_color).grid(row=0, column=7, sticky="ew")
+        ctk.CTkLabel(self.table_header, text="LATENCY", font=header_font, text_color=header_color).grid(row=0, column=8, sticky="ew")
 
 
         # 3. Host List
@@ -611,7 +611,7 @@ class PingApp(ctk.CTk):
             lbl_title.pack(pady=(30, 5))
             
             # Version
-            lbl_ver = ctk.CTkLabel(self.toplevel_about, text="v3.0 Professional Edition", text_color="#10b981", font=("Arial", 14, "bold"))
+            lbl_ver = ctk.CTkLabel(self.toplevel_about, text="v4.0 - Visual Clarity Edition", text_color="#10b981", font=("Arial", 14, "bold"))
             lbl_ver.pack(pady=(0, 20))
             
             # Separator

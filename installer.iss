@@ -3,7 +3,7 @@
 ; https://yvexa.dev
 
 #define MyAppName "Ping Monitor"
-#define MyAppVersion "3.0"
+#define MyAppVersion "4.0"
 #define MyAppPublisher "Yvexa"
 #define MyAppURL "https://yvexa.dev"
 #define MyAppExeName "Ping Monitor.exe"
