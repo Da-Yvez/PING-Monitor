@@ -185,6 +185,36 @@ For issues or questions:
 - Website: https://yvexa.dev
 - GitHub: Check the repository issues
 
+## Publishing to GitHub
+
+It is best practice **NOT** to commit large executables or installers directly to your git repository. Instead, use **GitHub Releases**.
+
+### 1. Commit Your Code (Without Binaries)
+Ensure your `.gitignore` excludes `dist/`, `build/`, and `installer_output/` (already configured).
+```bash
+git add .
+git commit -m "Release v3.0 Professional"
+git push origin main
+```
+
+### 2. Create a Release
+1. Go to your GitHub repository: https://github.com/Da-Yvez/PING-Monitor
+2. Click **"Releases"** on the right sidebar (or go to `/releases`).
+3. Click **"Draft a new release"**.
+4. **Tag version**: `v3.0.0`
+5. **Release title**: `Ping Monitor v3.0 Professional`
+6. **Description**: List the new features (Custom branding, Installer, Persistence, etc.).
+
+### 3. Upload Assets
+Drag and drop the following files into the "Attach binaries..." box:
+- `installer_output\PingMonitorSetup.exe` (The Installer - **Recommended**)
+- `dist\Ping Monitor.exe` (The Portable Executable - Optional for advanced users)
+
+### 4. Publish
+Click **"Publish release"**.
+
+Users can now download the installer directly from the "Assets" section of the release!
+
 ---
 
 **Built with ❤️ by Yvexa**
