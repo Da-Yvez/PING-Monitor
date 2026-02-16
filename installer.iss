@@ -29,8 +29,8 @@ DisableProgramGroupPage=yes
 OutputDir=installer_output
 OutputBaseFilename=PingMonitorSetup
 SetupIconFile=ping_monitor_icon.ico
-WizardImageFile=installer_wizard.bmp
-WizardSmallImageFile=installer_small.bmp
+WizardImageFile=installer_wizard.png
+WizardSmallImageFile=installer_small.png
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 ; Compression

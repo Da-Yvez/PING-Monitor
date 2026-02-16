@@ -48,7 +48,7 @@ def get_user_data_dir() -> str:
 
 class HostCard(ctk.CTkFrame):
     """
-    Compact card widget displaying stats for a single host.
+    Compact card widget displaying stats for a single host in a table-like row.
     """
     def __init__(self, master, name: str, target: str, remove_callback, *args, **kwargs):
         super().__init__(master, corner_radius=8, fg_color="#0a0a0a", border_width=2, border_color="#222222", *args, **kwargs)
@@ -57,66 +57,80 @@ class HostCard(ctk.CTkFrame):
         self.remove_callback = remove_callback
         self.blink_state = False
         
-        # Grid layout - Optimized for alignment
-        # Col 0: Status Dot (Fixed)
-        # Col 1: Name/Target (Left) - Weight 1, Uniform 'a'
-        # Col 2: Min/Max & Last Seen (Center) - Weight 1, Uniform 'a'
-        # Col 3: Stats (Center) - Weight 1, Uniform 'a'
-        # Col 4: Latency (Right) - Fixed/Weight 0
-        # Col 5: Delete (Far Right) - Fixed/Weight 0
+        # Grid layout - Table View
+        # 0: Status
+        # 1: Hostname/IP (Main)
+        # 2: Min
+        # 3: Max
+        # 4: Last Seen
+        # 5: Sent
+        # 6: Recv
+        # 7: Loss
+        # 8: MS
+        # 9: Delete Button
         
-        self.grid_columnconfigure(0, weight=0, minsize=40)
-        self.grid_columnconfigure(1, weight=1, uniform="col") 
-        self.grid_columnconfigure(2, weight=1, uniform="col")
-        self.grid_columnconfigure(3, weight=1, uniform="col")
-        self.grid_columnconfigure(4, weight=0, minsize=100)
-        self.grid_columnconfigure(5, weight=0, minsize=40)
+        # Distribute space: minsizes for alignment, weights for responsiveness
+        self.grid_columnconfigure(0, weight=0, minsize=40, uniform="edge")  # Status (fixed)
+        self.grid_columnconfigure(1, weight=3, minsize=200, uniform="host") # Name + IP (expandable)
+        self.grid_columnconfigure(2, weight=1, minsize=80, uniform="data")  # Min (expandable)
+        self.grid_columnconfigure(3, weight=1, minsize=80, uniform="data")  # Max (expandable)
+        self.grid_columnconfigure(4, weight=1, minsize=100, uniform="data") # Last Seen (expandable)
+        self.grid_columnconfigure(5, weight=1, minsize=80, uniform="data")  # Send (expandable)
+        self.grid_columnconfigure(6, weight=1, minsize=90, uniform="data")  # Recv (expandable)
+        self.grid_columnconfigure(7, weight=1, minsize=80, uniform="data")  # Loss (expandable)
+        self.grid_columnconfigure(8, weight=1, minsize=100, uniform="data") # MS (expandable)
+        self.grid_columnconfigure(9, weight=0, minsize=40, uniform="edge")  # Delete (fixed)
+
+        # Padding for inner elements to not overlap border
+        p_y = 10 
+        p_x = 5
 
         # -- 0. Status Indicator --
-        self.status_indicator = ctk.CTkLabel(self, text="●", font=("Arial", 28), text_color="gray")
-        self.status_indicator.grid(row=0, column=0, rowspan=2, padx=(10, 5), pady=5, sticky="w")
+        self.status_indicator = ctk.CTkLabel(self, text="●", font=("Arial", 24), text_color="gray")
+        self.status_indicator.grid(row=0, column=0, padx=(10, 5), pady=p_y, sticky="w")
         
-        # -- 1. Host Info --
+        # -- 1. Host Info (Name/Target) --
         self.info_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.info_frame.grid(row=0, column=1, rowspan=2, sticky="nswe", padx=5)
+        self.info_frame.grid(row=0, column=1, sticky="w", padx=p_x, pady=p_y)
         
-        self.lbl_name = ctk.CTkLabel(self.info_frame, text=name, font=("Roboto", 16, "bold"), text_color="#ffffff")
-        self.lbl_name.pack(anchor="w", pady=(2, 0))
-        
-        self.lbl_target = ctk.CTkLabel(self.info_frame, text=target, font=("Roboto", 14), text_color="#dddddd")
-        self.lbl_target.pack(anchor="w", pady=(0, 2))
+        self.lbl_name = ctk.CTkLabel(self.info_frame, text=name, font=("Roboto", 15, "bold"), text_color="#ffffff")
+        self.lbl_name.pack(anchor="w")
+        self.lbl_target = ctk.CTkLabel(self.info_frame, text=target, font=("Roboto", 12), text_color="#aaaaaa")
+        self.lbl_target.pack(anchor="w")
 
-        # -- 2. Min/Max & Last Seen --
-        self.mid_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.mid_frame.grid(row=0, column=2, rowspan=2, sticky="nswe", padx=5) # sticky nswe ensures full width
-        
-        # Use simple pack labels but maybe left align for consistency?
-        # Center is fine if col width is consistent.
-        self.lbl_minmax = ctk.CTkLabel(self.mid_frame, text="Min: -- | Max: --", font=("Roboto Mono", 12), text_color="#aaaaaa")
-        self.lbl_minmax.pack(anchor="center", pady=(2, 0))
-        
-        self.lbl_last_seen = ctk.CTkLabel(self.mid_frame, text="", font=("Roboto Mono", 12), text_color="#ffaa00")
-        self.lbl_last_seen.pack(anchor="center", pady=(0, 2))
+        # -- 2. Min --
+        self.lbl_min = ctk.CTkLabel(self, text="--", font=("Roboto Mono", 14), text_color="#bbbbbb")
+        self.lbl_min.grid(row=0, column=2, padx=p_x, pady=p_y)
 
-        # -- 3. Stats (Compact) --
-        self.stats_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.stats_frame.grid(row=0, column=3, rowspan=2, sticky="nswe", padx=10)
-        
-        self.lbl_sent = ctk.CTkLabel(self.stats_frame, text="S:0 R:0", font=("Roboto Mono", 12), text_color="#dddddd")
-        self.lbl_sent.pack(anchor="center")
-        
-        self.lbl_loss = ctk.CTkLabel(self.stats_frame, text="Loss: 0%", font=("Roboto Mono", 12, "bold"), text_color="#dddddd")
-        self.lbl_loss.pack(anchor="center")
+        # -- 3. Max --
+        self.lbl_max = ctk.CTkLabel(self, text="--", font=("Roboto Mono", 14), text_color="#bbbbbb")
+        self.lbl_max.grid(row=0, column=3, padx=p_x, pady=p_y)
 
-        # -- 4. Latency (Current) --
-        self.lbl_latency = ctk.CTkLabel(self, text="--ms", font=("Roboto", 24, "bold"), text_color="#ffffff")
-        self.lbl_latency.grid(row=0, column=4, rowspan=2, padx=15, sticky="e")
+        # -- 4. Last Seen --
+        self.lbl_last_seen = ctk.CTkLabel(self, text="--", font=("Roboto Mono", 12), text_color="#ffaa00")
+        self.lbl_last_seen.grid(row=0, column=4, padx=p_x, pady=p_y)
 
-        # -- 5. Delete Button --
+        # -- 5. Sent --
+        self.lbl_sent = ctk.CTkLabel(self, text="0", font=("Roboto Mono", 14), text_color="#dddddd")
+        self.lbl_sent.grid(row=0, column=5, padx=p_x, pady=p_y)
+
+        # -- 6. Recv --
+        self.lbl_recv = ctk.CTkLabel(self, text="0", font=("Roboto Mono", 14), text_color="#dddddd")
+        self.lbl_recv.grid(row=0, column=6, padx=p_x, pady=p_y)
+
+        # -- 7. Loss --
+        self.lbl_loss = ctk.CTkLabel(self, text="0%", font=("Roboto Mono", 14, "bold"), text_color="#dddddd")
+        self.lbl_loss.grid(row=0, column=7, padx=p_x, pady=p_y)
+
+        # -- 8. MS (Current) --
+        self.lbl_latency = ctk.CTkLabel(self, text="--ms", font=("Roboto", 18, "bold"), text_color="#ffffff")
+        self.lbl_latency.grid(row=0, column=8, padx=p_x, pady=p_y)
+
+        # -- 9. Delete Button --
         self.btn_delete = ctk.CTkButton(self, text="×", width=25, height=25, 
                                         fg_color="transparent", hover_color="#8b0000", 
                                         font=("Arial", 20), command=self._on_delete, text_color="#555555")
-        self.btn_delete.grid(row=0, column=5, rowspan=2, padx=(5, 10), sticky="e")
+        self.btn_delete.grid(row=0, column=9, padx=(5, 10), pady=p_y, sticky="e")
         
         threading.Thread(target=self._resolve_ip, daemon=True).start()
 
@@ -132,7 +146,7 @@ class HostCard(ctk.CTkFrame):
         if stats.last_status == "Up":
             self.status_indicator.configure(text_color="#00ff7f") 
             self.configure(border_color="#00ff7f", fg_color="#0a0a0a")
-            self.lbl_last_seen.configure(text="") # Clear when up
+            self.lbl_last_seen.configure(text="Now") # Clear when up
         elif stats.last_status == "Down":
             self.status_indicator.configure(text_color="#ff0000") 
             self.configure(border_color="#ff0000")
@@ -140,25 +154,28 @@ class HostCard(ctk.CTkFrame):
             # Update Last Seen
             if stats.last_seen_epoch:
                 dt = datetime.fromtimestamp(stats.last_seen_epoch)
-                self.lbl_last_seen.configure(text=f"Last Seen: {dt.strftime('%H:%M:%S')}")
+                self.lbl_last_seen.configure(text=f"{dt.strftime('%H:%M:%S')}")
             else:
-                self.lbl_last_seen.configure(text="Last Seen: Never")
+                self.lbl_last_seen.configure(text="Never")
         else:
             self.status_indicator.configure(text_color="gray30")
             self.configure(border_color="#222222", fg_color="#0a0a0a")
 
         # 2. Min/Max
-        min_s = f"{stats.latency_min_ms:.0f}" if stats.latency_min_ms is not None else "--"
-        max_s = f"{stats.latency_max_ms:.0f}" if stats.latency_max_ms is not None else "--"
-        self.lbl_minmax.configure(text=f"Min: {min_s}ms | Max: {max_s}ms")
+        min_s = f"{stats.latency_min_ms:.0f}ms" if stats.latency_min_ms is not None else "--"
+        max_s = f"{stats.latency_max_ms:.0f}ms" if stats.latency_max_ms is not None else "--"
+        self.lbl_min.configure(text=min_s)
+        self.lbl_max.configure(text=max_s)
 
         # 3. Stats
-        self.lbl_sent.configure(text=f"S:{stats.sent} R:{stats.received}")
+        self.lbl_sent.configure(text=f"{stats.sent}")
+        self.lbl_recv.configure(text=f"{stats.received}")
+        
         loss = stats.loss_percent()
         loss_color = "#dddddd"
         if loss > 0: loss_color = "#ffaa00"
         if loss >= 50: loss_color = "#ff3333"
-        self.lbl_loss.configure(text=f"Loss: {loss:.0f}%", text_color=loss_color)
+        self.lbl_loss.configure(text=f"{loss:.0f}%", text_color=loss_color)
 
         # 4. Latency
         if stats.last_latency_ms is not None:
@@ -184,9 +201,32 @@ class GraphPanel(ctk.CTkFrame):
         self.canvas = ctk.CTkCanvas(self, height=self.canvas_height, bg="#050505", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True, padx=0, pady=0) 
         
-        self.colors = ["#00BFFF", "#32CD32", "#FFD700", "#FF4500", "#BA55D3", "#00FA9A", "#FF69B4"]
         self.host_colors = {}
         
+    def _get_color_for_host(self, host: str) -> str:
+        if host in self.host_colors:
+            return self.host_colors[host]
+        
+        # Generate unique color based on host string
+        import hashlib
+        hash_object = hashlib.md5(host.encode())
+        hex_dig = hash_object.hexdigest()
+        
+        # Take 3 chunks of hex to make RGB
+        r = int(hex_dig[0:2], 16)
+        g = int(hex_dig[2:4], 16)
+        b = int(hex_dig[4:6], 16)
+        
+        # Brighten it up if too dark for dark mode
+        if r + g + b < 200:
+             r = min(255, r + 80)
+             g = min(255, g + 80)
+             b = min(255, b + 80)
+
+        color = f"#{r:02x}{g:02x}{b:02x}"
+        self.host_colors[host] = color
+        return color
+
     def update_graph(self, stats_map: Dict[str, HostStats], host_aliases: Dict[str, str]):
         self.canvas.delete("all")
         
@@ -221,9 +261,7 @@ class GraphPanel(ctk.CTkFrame):
         current_legend_x = legend_x
         
         for i, host in enumerate(sorted_hosts):
-            if host not in self.host_colors:
-                self.host_colors[host] = self.colors[i % len(self.colors)]
-            color = self.host_colors[host]
+            color = self._get_color_for_host(host)
             
             # 1. Draw Legend Item
             alias = host_aliases.get(host, host)
@@ -280,6 +318,7 @@ class PingApp(ctk.CTk):
         self.toplevel_add_host = None
         self.toplevel_about = None
         self.sidebar_expanded = True
+        self.show_graph_val = ctk.BooleanVar(value=True) # Graph toggle
         
         # Setup UI
         self._build_layout()
@@ -332,6 +371,11 @@ class PingApp(ctk.CTk):
                                           hover_color="#333333", **btn_style)
         self.btn_export.pack(padx=20, pady=10, fill="x")
 
+        # Graph Toggle (Switch)
+        self.switch_graph = ctk.CTkSwitch(self.sidebar_content, text="Show Graph", command=self._toggle_graph, 
+                                          variable=self.show_graph_val, font=("Roboto", 13))
+        self.switch_graph.pack(padx=20, pady=15, fill="x", anchor="w")
+
         # Spacer
         self.btn_about = ctk.CTkButton(self.sidebar_content, text="About", command=self._on_about, 
                                        hover_color="#333333", fg_color="#222222", border_width=1, border_color="#333333", text_color="#3b8ed0", **btn_style)
@@ -342,7 +386,7 @@ class PingApp(ctk.CTk):
         self.main_area.grid(row=0, column=1, sticky="nsew")
         
         # Sub-Grid
-        self.main_area.grid_rowconfigure(1, weight=1) 
+        self.main_area.grid_rowconfigure(2, weight=1) 
         self.main_area.grid_columnconfigure(0, weight=1)
 
         # 1. Header
@@ -355,27 +399,64 @@ class PingApp(ctk.CTk):
         self.lbl_status = ctk.CTkLabel(self.header_frame, text="⬤ HEALTHY", font=("Roboto", 16, "bold"), text_color="#00ff7f")
         self.lbl_status.pack(side="right", padx=10)
 
-        # 2. Host List
+        # 2. Table Headers (NEW) - Updated for better distribution
+        self.table_header = ctk.CTkFrame(self.main_area, fg_color="#111111", corner_radius=5, height=35)
+        self.table_header.grid(row=1, column=0, sticky="ew", padx=10, pady=(5, 0))
+        
+        # Configure Grid for Header (Must match HostCard exactly)
+        self.table_header.grid_columnconfigure(0, weight=0, minsize=40, uniform="edge")  # Status (fixed)
+        self.table_header.grid_columnconfigure(1, weight=3, minsize=200, uniform="host") # Name (expandable)
+        self.table_header.grid_columnconfigure(2, weight=1, minsize=80, uniform="data")  # Min (expandable)
+        self.table_header.grid_columnconfigure(3, weight=1, minsize=80, uniform="data")  # Max (expandable)
+        self.table_header.grid_columnconfigure(4, weight=1, minsize=100, uniform="data") # Last Seen (expandable)
+        self.table_header.grid_columnconfigure(5, weight=1, minsize=80, uniform="data")  # Send (expandable)
+        self.table_header.grid_columnconfigure(6, weight=1, minsize=90, uniform="data")  # Recv (expandable)
+        self.table_header.grid_columnconfigure(7, weight=1, minsize=80, uniform="data")  # Loss (expandable)
+        self.table_header.grid_columnconfigure(8, weight=1, minsize=100, uniform="data") # MS (expandable)
+        self.table_header.grid_columnconfigure(9, weight=0, minsize=40, uniform="edge")  # Delete (fixed)
+        
+        header_font = ("Roboto", 12, "bold")
+        header_color = "#888888"
+        
+        ctk.CTkLabel(self.table_header, text="", width=40).grid(row=0, column=0) 
+        ctk.CTkLabel(self.table_header, text="HOST", font=header_font, text_color=header_color, anchor="w").grid(row=0, column=1, sticky="w", padx=10)
+        ctk.CTkLabel(self.table_header, text="MIN", font=header_font, text_color=header_color).grid(row=0, column=2)
+        ctk.CTkLabel(self.table_header, text="MAX", font=header_font, text_color=header_color).grid(row=0, column=3)
+        ctk.CTkLabel(self.table_header, text="LAST SEEN", font=header_font, text_color=header_color).grid(row=0, column=4)
+        ctk.CTkLabel(self.table_header, text="SENT", font=header_font, text_color=header_color).grid(row=0, column=5)
+        ctk.CTkLabel(self.table_header, text="RECEIVED", font=header_font, text_color=header_color).grid(row=0, column=6)
+        ctk.CTkLabel(self.table_header, text="LOSS", font=header_font, text_color=header_color).grid(row=0, column=7)
+        ctk.CTkLabel(self.table_header, text="LATENCY", font=header_font, text_color=header_color).grid(row=0, column=8)
+
+
+        # 3. Host List
         self.scroll_frame = ctk.CTkScrollableFrame(self.main_area, fg_color="transparent", label_text="")
-        self.scroll_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 0))
+        self.scroll_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=(5, 0))
         self.scroll_frame.grid_columnconfigure(0, weight=1)
         
-        # 3. Warning Banner (between List and Graph)
+        # 4. Warning Banner
         self.warning_banner = ctk.CTkFrame(self.main_area, fg_color="#ff0000", height=0, corner_radius=0)
-        self.warning_banner.grid(row=2, column=0, sticky="ew")
+        self.warning_banner.grid(row=3, column=0, sticky="ew")
         self.lbl_warning = ctk.CTkLabel(self.warning_banner, text="⚠️ SYSTEM ALERT: ONE OR MORE HOSTS DOWN", font=("Roboto", 18, "bold"), text_color="white")
         self.lbl_warning.pack(pady=5)
-        self.warning_banner.grid_remove() # Hide initially
+        self.warning_banner.grid_remove() 
 
-        # 4. Graph Panel (Bottom)
+        # 5. Graph Panel
         self.graph_panel = GraphPanel(self.main_area)
-        self.graph_panel.grid(row=3, column=0, sticky="ew", padx=0, pady=0)
+        self.graph_panel.grid(row=4, column=0, sticky="ew", padx=0, pady=0)
+
+    def _toggle_graph(self):
+        if self.show_graph_val.get():
+            self.graph_panel.grid(row=4, column=0, sticky="ew", padx=0, pady=0)
+        else:
+            self.graph_panel.grid_forget()
 
     def _toggle_sidebar(self):
         self.lbl_logo.pack_forget()
         self.btn_add.pack_forget()
         self.btn_interval.pack_forget()
         self.btn_export.pack_forget()
+        self.switch_graph.pack_forget()
         self.btn_about.pack_forget()
         
         if self.sidebar_expanded:
@@ -389,6 +470,7 @@ class PingApp(ctk.CTk):
             self.btn_add.pack(padx=20, pady=10, fill="x", after=self.lbl_logo)
             self.btn_interval.pack(padx=20, pady=10, fill="x", after=self.btn_add)
             self.btn_export.pack(padx=20, pady=10, fill="x", after=self.btn_interval)
+            self.switch_graph.pack(padx=20, pady=15, fill="x", anchor="w", after=self.btn_export)
             self.btn_about.pack(side="bottom", padx=20, pady=20, fill="x")
 
     def _blink_logic(self):
@@ -427,7 +509,7 @@ class PingApp(ctk.CTk):
         except queue.Empty:
             pass
         
-        if needs_graph_update:
+        if needs_graph_update and self.show_graph_val.get():
             self.graph_panel.update_graph(self.manager.stats_snapshot(), self.host_aliases)
         
         self.after(100, self._process_queue)
