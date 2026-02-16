@@ -20,6 +20,10 @@
 # PyInstaller for creating standalone executables
 # pyinstaller>=5.0.0
 
+# Modern UI
+customtkinter
+Pillow
+
 # Code quality tools (optional)
 # pylint>=2.0.0
 # black>=22.0.0

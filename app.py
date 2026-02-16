@@ -2,783 +2,465 @@ import json
 import os
 import queue
 import sys
+import threading
 import time
 from datetime import datetime
 from urllib.parse import urlparse
-import base64
-import tkinter as tk
-from tkinter import messagebox, simpledialog
-from tkinter import ttk
+from typing import Dict, Optional, List
 
+# GUI Imports
+import customtkinter as ctk
+from PIL import Image, ImageTk
+
+# Logic Imports
 from ping_manager import PingManager, HostStats
 
+# Set theme
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("blue")
 
 APP_TITLE = "Ping Monitor"
-DEFAULT_INTERVAL_SECONDS = 1.0
+APP_SIZE = "1100x700"
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".ping_monitor_settings.json")
+DEFAULT_INTERVAL = 1.0
 
 
-def resource_path(*parts: str) -> str:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_dir, *parts)
+def resource_path(relative_path: str) -> str:
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 
-HOSTS_FILE = resource_path("hosts.json")
+class HostCard(ctk.CTkFrame):
+    """
+    A card widget displaying stats for a single host.
+    Styled with "OLED Dark" theme and high visibility.
+    """
+    def __init__(self, master, host: str, remove_callback, *args, **kwargs):
+        super().__init__(master, corner_radius=12, fg_color="#0a0a0a", border_width=1, border_color="#222222", *args, **kwargs)
+        self.host = host
+        self.remove_callback = remove_callback
+        
+        # Grid layout
+        self.grid_columnconfigure(1, weight=1)  # Details expand
+        
+        # -- 1. Status Indicator (Big Dot) --
+        self.status_indicator = ctk.CTkLabel(self, text="●", font=("Arial", 36), text_color="gray")
+        self.status_indicator.grid(row=0, column=0, rowspan=2, padx=(15, 10), pady=15, sticky="w")
+        
+        # -- 2. Host Info --
+        self.info_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.info_frame.grid(row=0, column=1, rowspan=2, sticky="nswe", padx=5)
+        
+        self.lbl_host = ctk.CTkLabel(self.info_frame, text=host, font=("Roboto", 18, "bold"), text_color="#ffffff")
+        self.lbl_host.pack(anchor="w")
+        
+        self.lbl_ip = ctk.CTkLabel(self.info_frame, text="Resolving IP...", font=("Roboto", 14), text_color="#aaaaaa")
+        self.lbl_ip.pack(anchor="w")
+        
+        self.lbl_uptime = ctk.CTkLabel(self.info_frame, text="Uptime: --%", font=("Roboto", 12), text_color="#666666")
+        self.lbl_uptime.pack(anchor="w")
+        # -- 3. Stats (Sent/Recv/Loss) --
+        self.stats_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.stats_frame.grid(row=0, column=2, rowspan=2, padx=20, sticky="e")
+        
+        self.lbl_sent = ctk.CTkLabel(self.stats_frame, text="S: 0 | R: 0", font=("Roboto Mono", 14), text_color="#dddddd")
+        self.lbl_sent.pack(anchor="e")
+        
+        self.lbl_loss = ctk.CTkLabel(self.stats_frame, text="Loss: 0%", font=("Roboto Mono", 14, "bold"), text_color="#dddddd")
+        self.lbl_loss.pack(anchor="e")
+
+        # -- 4. Latency (Big Number) --
+        self.lbl_latency = ctk.CTkLabel(self, text="-- ms", font=("Roboto", 28, "bold"), text_color="#ffffff")
+        self.lbl_latency.grid(row=0, column=3, rowspan=2, padx=20, sticky="e")
+
+        # -- 5. Delete Button --
+        self.btn_delete = ctk.CTkButton(self, text="×", width=35, height=35, 
+                                        fg_color="transparent", hover_color="#8b0000", 
+                                        font=("Arial", 24), command=self._on_delete, text_color="#555555")
+        self.btn_delete.grid(row=0, column=4, rowspan=2, padx=(5, 15), sticky="e")
+
+        # Resolve IP in background
+        threading.Thread(target=self._resolve_ip, daemon=True).start()
+
+    def _on_delete(self):
+        if self.remove_callback:
+            self.remove_callback(self.host)
+
+    def _resolve_ip(self):
+        try:
+            # simple blocking resolve
+            import socket
+            ip = socket.gethostbyname(self.host)
+            self.lbl_ip.configure(text=ip)
+        except:
+            self.lbl_ip.configure(text="IP Not Found")
+
+    def update_stats(self, stats: HostStats):
+        # 1. Status Color (Brighter Green/Red)
+        if stats.last_status == "Up":
+            self.status_indicator.configure(text_color="#00ff7f") # SpringGreen
+            self.configure(border_color="#004400") # Subtle border hint
+        elif stats.last_status == "Down":
+            self.status_indicator.configure(text_color="#ff0000") # Pure Red
+            self.configure(border_color="#440000") # Subtle border hint
+        else:
+            self.status_indicator.configure(text_color="gray30")
+            self.configure(border_color="#222222")
+
+        # 2. Uptime
+        self.lbl_uptime.configure(text=f"Uptime: {stats.uptime_percent():.1f}%")
+
+        # 3. Stats
+        self.lbl_sent.configure(text=f"S: {stats.sent} | R: {stats.received}")
+        
+        loss = stats.loss_percent()
+        loss_color = "#dddddd"
+        if loss > 0: loss_color = "#ffaa00"
+        if loss >= 50: loss_color = "#ff3333"
+        self.lbl_loss.configure(text=f"Loss: {loss:.1f}%", text_color=loss_color)
+
+        # 4. Latency
+        if stats.last_latency_ms is not None:
+            self.lbl_latency.configure(text=f"{stats.last_latency_ms:.1f} ms", text_color="#ffffff")
+        else:
+            self.lbl_latency.configure(text="-- ms", text_color="#555555")
 
 
-class PingApp(tk.Tk):
-    def __init__(self) -> None:
+class GraphPanel(ctk.CTkFrame):
+    """
+    Bottom panel displaying a multi-line graph for all hosts.
+    """
+    def __init__(self, master, *args, **kwargs):
+        super().__init__(master, fg_color="#050505", corner_radius=0, *args, **kwargs)
+        
+        self.canvas_height = 200 # Fixed height for now
+        self.canvas = ctk.CTkCanvas(self, height=self.canvas_height, bg="#050505", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        self.colors = ["#00BFFF", "#32CD32", "#FFD700", "#FF4500", "#BA55D3", "#00FA9A", "#FF69B4"]
+        self.host_colors = {}
+        
+    def update_graph(self, stats_map: Dict[str, HostStats]):
+        self.canvas.delete("all")
+        
+        width = self.canvas.winfo_width()
+        height = self.canvas_height
+        if width < 50: return # not rendered yet
+
+        # Draw grid lines
+        self.canvas.create_line(0, height/2, width, height/2, fill="#222222", dash=(2, 4))
+        self.canvas.create_line(0, height/4, width, height/4, fill="#222222", dash=(1, 4))
+        self.canvas.create_line(0, 3*height/4, width, 3*height/4, fill="#222222", dash=(1, 4))
+
+        # Assign colors
+        for i, host in enumerate(stats_map.keys()):
+            if host not in self.host_colors:
+                self.host_colors[host] = self.colors[i % len(self.colors)]
+
+        # Find global max latency for scaling
+        all_values = []
+        for s in stats_map.values():
+            for _, v in s.history:
+                if v is not None: all_values.append(v)
+        
+        if not all_values: return
+        
+        max_val = max(all_values)
+        if max_val < 50: max_val = 50 # Minimum scale 50ms
+        
+        # Draw lines for each host
+        for host, stats in stats_map.items():
+            color = self.host_colors[host]
+            history = list(stats.history)
+            if len(history) < 2: continue
+            
+            # X scaling: Fixed window size (HISTORY_MAX points)
+            # Or simplified: spread points across width
+            # For consistent scrolling, we might want fixed 5px per point?
+            # Let's map HISTORY_MAX points to width
+            
+            step_x = width / (len(history) - 1)
+            coords = []
+            
+            for i, (_, val) in enumerate(history):
+                x = i * step_x
+                if val is None:
+                    coords.append(None)
+                else:
+                    # Invert Y
+                    y = height - ((val / max_val) * (height - 10)) - 5
+                    coords.append((x, y))
+            
+            current_line = []
+            for p in coords:
+                if p is None:
+                    if len(current_line) >= 4:
+                        self.canvas.create_line(current_line, fill=color, width=2, smooth=True)
+                    current_line = []
+                else:
+                    current_line.append(p[0])
+                    current_line.append(p[1])
+            
+            if len(current_line) >= 4:
+                self.canvas.create_line(current_line, fill=color, width=2, smooth=True)
+                
+            # Draw legend name at last point if exists
+            if coords[-1] is not None:
+                lx, ly = coords[-1]
+                self.canvas.create_text(lx - 5, ly - 10, text=host, fill=color, anchor="se", font=("Arial", 10))
+
+
+class PingApp(ctk.CTk):
+    def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        # Window sizing restored from settings later
-        self.geometry("800x420")
-
-        # Embedded tiny PNG used for window icon so bundled exe has an icon without extra files
-        ICON_PNG = (
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="
-        )
-        try:
-            img = tk.PhotoImage(data=base64.b64decode(ICON_PNG))
-            # Keep a reference alive
-            self._icon_image = img
-            try:
-                self.iconphoto(False, img)
-            except Exception:
-                pass
-        except Exception:
-            pass
-
+        self.geometry(APP_SIZE)
+        
+        # Data
         self.manager = PingManager()
-        # Which hosts are shown in the graph (populated as hosts are loaded)
-        self._graph_visible = {}
-        # Legend checkbox vars
-        self._legend_vars = {}
-        # Graph show/hide var
-        self._show_graph_var = tk.BooleanVar(value=True)
-        self._build_ui()
-        self._build_menu()
-
-        self._settings = self._load_settings()
-        hosts = self._load_hosts()
-        for host in hosts:
-            self.manager.add_host(host, interval_seconds=self._settings.get("default_interval", DEFAULT_INTERVAL_SECONDS))
-            # default to visible in graph
-            self._graph_visible[host] = True
-            self._ensure_tree_item(host)
-
-        # Restore window size if present
-        geom = self._settings.get("window_geometry")
-        if isinstance(geom, str) and geom:
-            try:
-                self.geometry(geom)
-            except Exception:
-                pass
-
-        self.after(100, self._drain_updates)
+        self.hosts_map: Dict[str, HostCard] = {} # host -> CardWidget
+        
+        # Setup UI
+        self._build_layout()
+        
+        # Load Hosts
+        self._load_hosts()
+        
+        # Start timer
+        self.after(100, self._process_queue)
+        self.after(500, self._blink_alert) # Global alert blinker
+        
+        # Handle close
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        
+        self.alert_state = False
 
-    def _build_ui(self) -> None:
-        self._apply_dark_theme()
-        outer = ttk.Frame(self)
-        outer.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+    def _build_layout(self):
+        # Grid Layout: 2 rows (Main, Graph), 2 columns (Sidebar, Content)
+        self.grid_rowconfigure(0, weight=3) # Main list
+        self.grid_rowconfigure(1, weight=1) # Graph panel
+        self.grid_columnconfigure(1, weight=1)
 
-        controls = ttk.Frame(outer)
-        controls.pack(fill=tk.X, pady=(0, 8))
+        # -- Sidebar --
+        self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color="#181818")
+        self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
+        self.sidebar.grid_rowconfigure(5, weight=1)
+        
+        self.logo_label = ctk.CTkLabel(self.sidebar, text="PING\nMonitor", font=ctk.CTkFont(size=26, weight="bold"))
+        self.logo_label.grid(row=0, column=0, padx=20, pady=(30, 20))
 
-        self.host_var = tk.StringVar()
-        host_entry = ttk.Entry(controls, textvariable=self.host_var)
-        host_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        host_entry.bind("<Return>", lambda e: self._on_add())
+        # Action Buttons
+        button_style = {"height": 40, "corner_radius": 8, "font": ("Roboto", 14)}
+        self.btn_add = ctk.CTkButton(self.sidebar, text="Add Host", command=self._on_add_host, **button_style)
+        self.btn_add.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
 
-        add_btn = ttk.Button(controls, text="Add", command=self._on_add)
-        add_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self.btn_interval = ctk.CTkButton(self.sidebar, text="Set Interval", command=self._on_set_interval,
+                                          fg_color="transparent", border_width=1, border_color="gray40", 
+                                          hover_color="#333333", **button_style)
+        self.btn_interval.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+        
+        self.btn_export = ctk.CTkButton(self.sidebar, text="Export CSV", command=self._on_export,
+                                          fg_color="transparent", border_width=1, border_color="gray40", 
+                                          hover_color="#333333", **button_style)
+        self.btn_export.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
 
-        remove_btn = ttk.Button(controls, text="Remove Selected", command=self._on_remove)
-        remove_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self.btn_about = ctk.CTkButton(self.sidebar, text="About / Yvexa", command=self._on_about, 
+                                       hover_color="#333333", fg_color="transparent", text_color="#3b8ed0")
+        self.btn_about.grid(row=6, column=0, padx=20, pady=(10, 20))
+        
+        # -- Main Area --
+        # Header with Alert
+        self.header_frame = ctk.CTkFrame(self, height=50, corner_radius=0, fg_color="#111111")
+        self.header_frame.grid(row=0, column=1, sticky="new") # Overlay on top row? No, create a sub-frame
+        # Actually easier to put header inside Main Grid
+        
+        # Let's adjust grid:
+        # Row 0: Hosts List (contains header)
+        # Row 1: Graph Panel
+        
+        self.main_container = ctk.CTkFrame(self, fg_color="#000000", corner_radius=0)
+        self.main_container.grid(row=0, column=1, sticky="nsew")
+        self.main_container.grid_rowconfigure(1, weight=1)
+        self.main_container.grid_columnconfigure(0, weight=1)
 
-        edit_btn = ttk.Button(controls, text="Set Interval", command=self._on_set_interval)
-        edit_btn.pack(side=tk.LEFT, padx=(8, 0))
+        # Dashboard Header
+        self.dash_head = ctk.CTkFrame(self.main_container, fg_color="transparent", height=60)
+        self.dash_head.grid(row=0, column=0, sticky="ew", padx=20, pady=10)
+        
+        self.lbl_title = ctk.CTkLabel(self.dash_head, text="Dashboard", font=("Roboto", 24, "bold"))
+        self.lbl_title.pack(side="left")
+        
+        self.lbl_alert = ctk.CTkLabel(self.dash_head, text="⬤ HEALTHY", font=("Roboto", 16, "bold"), text_color="#00ff7f")
+        self.lbl_alert.pack(side="right", padx=10)
 
-        # Small health indicator on the right that pulses when any host is Down
-        self._health_canvas = tk.Canvas(controls, width=26, height=26, highlightthickness=0, bg=self.cget("bg"))
-        self._health_canvas.pack(side=tk.RIGHT, padx=(8, 0))
-        # Draw a circle
-        self._health_dot = self._health_canvas.create_oval(4, 4, 22, 22, fill="#7ee787", outline="")
-        self._health_pulse_phase = 0
-        self._any_down = False
-        self.after(120, self._health_pulse_step)
+        # Host List
+        self.scroll_frame = ctk.CTkScrollableFrame(self.main_container, fg_color="transparent", label_text="")
+        self.scroll_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.scroll_frame.grid_columnconfigure(0, weight=1)
 
-        columns = ("status_icon", "host", "status", "latency", "avg", "min", "max", "sent", "received", "loss", "uptime", "last_seen", "message")
+        # -- Graph Panel (Row 1) --
+        self.graph_panel = GraphPanel(self)
+        self.graph_panel.grid(row=1, column=1, sticky="nsew", padx=0, pady=0)
 
-        # Table frame (top) holds the tree and its scrollbar so graph can sit under it
-        table_frame = ttk.Frame(outer)
-        table_frame.pack(fill=tk.BOTH, expand=True)
-
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=14)
-        self.tree.heading("status_icon", text="")
-        self.tree.heading("host", text="Host")
-        self.tree.heading("status", text="Status")
-        self.tree.heading("latency", text="Latency (ms)")
-        self.tree.heading("avg", text="Avg (ms)")
-        self.tree.heading("min", text="Min (ms)")
-        self.tree.heading("max", text="Max (ms)")
-        self.tree.heading("sent", text="Sent")
-        self.tree.heading("received", text="Recv")
-        self.tree.heading("loss", text="Loss %")
-        self.tree.heading("uptime", text="Uptime %")
-        self.tree.heading("last_seen", text="Last Seen")
-        self.tree.heading("message", text="Last Message")
-
-        self.tree.column("status_icon", width=18, anchor=tk.CENTER)
-        self.tree.column("host", width=160, anchor=tk.W)
-        self.tree.column("status", width=70, anchor=tk.CENTER)
-        self.tree.column("latency", width=90, anchor=tk.E)
-        self.tree.column("avg", width=90, anchor=tk.E)
-        self.tree.column("min", width=90, anchor=tk.E)
-        self.tree.column("max", width=90, anchor=tk.E)
-        self.tree.column("sent", width=60, anchor=tk.E)
-        self.tree.column("received", width=60, anchor=tk.E)
-        self.tree.column("loss", width=70, anchor=tk.E)
-        self.tree.column("uptime", width=80, anchor=tk.E)
-        self.tree.column("last_seen", width=140, anchor=tk.W)
-        self.tree.column("message", width=300, anchor=tk.W)
-
-        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.LEFT, fill=tk.Y)
-
-        status_bar = ttk.Label(self, text="Enter a host/IP and click Add.")
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-        # keep a reference for transient messages
-        self._status_label = status_bar
-
-        # Treeview row tag styles
-        self.tree.tag_configure("up", foreground="#7ee787")      # brighter green
-        self.tree.tag_configure("down", foreground="#ff7b72")    # brighter red
-        self.tree.tag_configure("unknown", foreground="#abb2bf") # gray
-        # Blink state - bright red background when blinking
-        self.tree.tag_configure("blink", background="#cc0000")
-
-        # Deselect when clicking blank area
-        self.tree.bind("<Button-1>", self._on_tree_click_blank, add=True)
-        # Double click copies host to clipboard for convenience
-        self.tree.bind("<Double-1>", self._on_tree_double)
-
-        # Zebra stripes for readability
-        self.tree.tag_configure("oddrow", background="#202020")
-        self.tree.tag_configure("evenrow", background="#1a1a1a")
-
-        # Alert bar (hidden normally) that blinks bright red when any host is down
-        self._alert_bar = tk.Label(self, text="⚠ ALERT: One or more hosts are DOWN ⚠", 
-                                  bg="#5a1a1a", fg="#ffffff", font=("Helvetica", 14, "bold"),
-                                  padx=16, pady=6)
-        # Graph area under the table showing recent latency histories (5-minute window)
-        graph_section = ttk.Frame(outer)
-        graph_section.pack(fill=tk.X, pady=(8, 0))
-
-        # Legend frame immediately above the graph, with dark background for visibility
-        legend_container = ttk.Frame(graph_section, style="Dark.TFrame")
-        legend_container.pack(fill=tk.X, padx=2, pady=(0, 4))
-        self.legend_frame = ttk.Frame(legend_container)
-        self.legend_frame.pack(fill=tk.X, pady=4)
-
-        # The graph canvas itself
-        self.graph_frame = ttk.Frame(graph_section)
-        self.graph_frame.pack(fill=tk.X)
-        # Make it larger for clearer analysis
-        self.graph_canvas = tk.Canvas(self.graph_frame, height=260, bg="#0f0f0f", highlightthickness=0)
-        self.graph_canvas.pack(fill=tk.BOTH, expand=True)
-        # color palette for hosts
-        self._graph_colors = ["#7ee787", "#ff7b72", "#ffd66b", "#8ad4ff", "#d39bff", "#9be79b", "#ff9fbf", "#c0c0c0", "#6ad3a6", "#ffa36a"]
-        # schedule periodic graph updates
-        self.after(800, self._update_graph)
-        # schedule alert blink step
-        self._alert_blink_state = False
-        self.after(400, self._alert_blink_step)
-
-        # (ui bindings already set above)
-
-    def _apply_dark_theme(self) -> None:
-        style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-
-        bg = "#1e1e1e"
-        fg = "#e6e6e6"
-        subtle = "#2a2a2a"
-        accent = "#3a3a3a"
-        sel_bg = "#264f78"
-        sel_fg = "#ffffff"
-
-        # Base styles
-        self.configure(bg=bg)
-        style.configure("TFrame", background=bg)
-        style.configure("Dark.TFrame", background="#0f0f0f")  # Darker background for legend
-        style.configure("TLabel", background=bg, foreground=fg)
-        style.configure("Dark.TLabel", background="#0f0f0f", foreground="#e6e6e6")  # Labels on dark background
-        style.configure("TButton", background=subtle, foreground=fg, relief="flat", padding=6)
-        style.map("TButton",
-                  background=[("active", accent)],
-                  relief=[("pressed", "sunken")])
-
-        # Entry
-        style.configure("TEntry", fieldbackground=subtle, foreground=fg)
-
-        # Treeview
-        style.configure("Treeview",
-                        background=bg,
-                        foreground=fg,
-                        fieldbackground=bg,
-                        rowheight=22,
-                        bordercolor=subtle,
-                        borderwidth=0)
-        style.map("Treeview",
-                  background=[("selected", sel_bg)],
-                  foreground=[("selected", sel_fg)])
-        style.configure("Treeview.Heading",
-                        background=subtle,
-                        foreground=fg,
-                        relief="flat")
-        style.map("Treeview.Heading",
-                  background=[("active", accent)])
-
-    def _build_menu(self) -> None:
-        menubar = tk.Menu(self)
-        file_menu = tk.Menu(menubar, tearoff=0, bg="#1e1e1e", fg="#e6e6e6", activebackground="#333333", activeforeground="#ffffff")
-        file_menu.add_command(label="Export CSV", command=self._on_export_csv)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self._on_close)
-        menubar.add_cascade(label="File", menu=file_menu)
-
-        # View menu to toggle columns and graph
-        view_menu = tk.Menu(menubar, tearoff=0, bg="#1e1e1e", fg="#e6e6e6", activebackground="#333333", activeforeground="#ffffff")
-        self._column_vars = {}
-        for col, label in [("avg", "Avg (ms)"), ("min", "Min (ms)"), ("max", "Max (ms)"), ("uptime", "Uptime %"), ("message", "Last Message")]:
-            var = tk.BooleanVar(value=True)
-            self._column_vars[col] = var
-            view_menu.add_checkbutton(label=label, variable=var, command=lambda c=col: self._toggle_column(c))
-
-        # Graph controls
-        view_menu.add_separator()
-        view_menu.add_checkbutton(label="Show Graph", variable=self._show_graph_var, command=self._toggle_graph)
-        view_menu.add_command(label="Select Graph Hosts...", command=self._select_graph_hosts)
-        menubar.add_cascade(label="View", menu=view_menu)
-
-        help_menu = tk.Menu(menubar, tearoff=0, bg="#1e1e1e", fg="#e6e6e6", activebackground="#333333", activeforeground="#ffffff")
-        help_menu.add_command(label="About", command=self._on_about)
-        menubar.add_cascade(label="Help", menu=help_menu)
-        self.config(menu=menubar)
-
-    def _toggle_graph(self) -> None:
-        # Show or hide the graph area
-        try:
-            visible = self._show_graph_var.get()
-            if hasattr(self, "graph_frame"):
-                if visible:
-                    self.graph_frame.pack(fill=tk.X, pady=(8, 0))
-                else:
-                    self.graph_frame.pack_forget()
-        except Exception:
-            pass
-
-    def _select_graph_hosts(self) -> None:
-        # Simple dialog to let user choose which hosts are visible on the graph
-        hosts = sorted(self._get_all_tree_hosts())
-        if not hosts:
-            messagebox.showinfo("Select Hosts", "No hosts available.")
-            return
-        dlg = tk.Toplevel(self)
-        dlg.title("Select Graph Hosts")
-        dlg.transient(self)
-        dlg.grab_set()
-        checks: dict[str, tk.BooleanVar] = {}
-        for h in hosts:
-            var = tk.BooleanVar(value=self._graph_visible.get(h, True))
-            checks[h] = var
-            cb = ttk.Checkbutton(dlg, text=h, variable=var)
-            cb.pack(anchor=tk.W, padx=8, pady=2)
-
-        def _apply():
-            for h, v in checks.items():
-                self._graph_visible[h] = bool(v.get())
-            dlg.destroy()
-
-        btn = ttk.Button(dlg, text="Apply", command=_apply)
-        btn.pack(pady=8)
-
-    def _on_add(self) -> None:
-        raw = self.host_var.get().strip()
-        host = self._normalize_host(raw)
-        if not host:
-            return
-        if host in self._get_all_tree_hosts():
-            return
-        self.manager.add_host(host, interval_seconds=self._settings.get("default_interval", DEFAULT_INTERVAL_SECONDS))
-        self._ensure_tree_item(host)
-        self.host_var.set("")
-        self._save_hosts()
-
-    def _on_remove(self) -> None:
-        selected = self.tree.selection()
-        if not selected:
-            return
-        for item_id in selected:
-            host = self.tree.set(item_id, "host")
-            self.manager.remove_host(host)
-            self.tree.delete(item_id)
-            # remove from graph visibility map
-            if host in self._graph_visible:
-                del self._graph_visible[host]
-        try:
-            # rebuild legend after removal
-            self._rebuild_legend(list(self._graph_visible.keys()), {h: self._graph_colors[idx % len(self._graph_colors)] for idx, h in enumerate(self._graph_visible)})
-        except Exception:
-            pass
-        self._save_hosts()
-
-    def _get_all_tree_hosts(self) -> set[str]:
-        hosts: set[str] = set()
-        for iid in self.tree.get_children(""):
-            hosts.add(self.tree.set(iid, "host"))
-        return hosts
-
-    def _ensure_tree_item(self, host: str) -> None:
-        # If not present, insert an empty row for the host
-        for iid in self.tree.get_children(""):
-            if self.tree.set(iid, "host") == host:
-                return
-        idx = len(self.tree.get_children(""))
-        row_tag = "oddrow" if idx % 2 else "evenrow"
-        self.tree.insert("", tk.END, values=("", host, "...", "", "", "", "", "", "", "", "", "", ""), tags=("unknown", row_tag))
-        # Ensure graph visibility entry exists and update legend
-        if host not in self._graph_visible:
-            self._graph_visible[host] = True
-        try:
-            self._rebuild_legend(list(self._graph_visible.keys()), {h: self._graph_colors[idx % len(self._graph_colors)] for idx, h in enumerate(self._graph_visible)})
-        except Exception:
-            pass
-
-    def _update_tree_with_stats(self, stats: HostStats) -> None:
-        for iid in self.tree.get_children(""):
-            if self.tree.set(iid, "host") == stats.host:
-                last_seen_str = ""
-                if stats.last_seen_epoch:
-                    dt = datetime.fromtimestamp(stats.last_seen_epoch)
-                    last_seen_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-                latency_str = f"{stats.last_latency_ms:.1f}" if stats.last_latency_ms is not None else ""
-                avg_str = f"{stats.avg_latency_ms():.1f}" if stats.avg_latency_ms() is not None else ""
-                min_str = f"{stats.latency_min_ms:.1f}" if stats.latency_min_ms is not None else ""
-                max_str = f"{stats.latency_max_ms:.1f}" if stats.latency_max_ms is not None else ""
-                loss_str = f"{stats.loss_percent():.0f}"
-                uptime_str = f"{stats.uptime_percent():.0f}"
-                icon = "●" if stats.last_status == "Up" else ("○" if stats.last_status == "Down" else "·")
-                # Sound alert on transition to Down
-                previous_status = self.tree.set(iid, "status")
-                if previous_status != "Down" and stats.last_status == "Down":
-                    try:
-                        self.bell()
-                    except Exception:
-                        pass
-                self.tree.item(iid, values=(
-                    icon,
-                    stats.host,
-                    stats.last_status,
-                    latency_str,
-                    avg_str,
-                    min_str,
-                    max_str,
-                    str(stats.sent),
-                    str(stats.received),
-                    loss_str,
-                    uptime_str,
-                    last_seen_str,
-                    stats.last_message,
-                ))
-                tag = "up" if stats.last_status == "Up" else ("down" if stats.last_status == "Down" else "unknown")
-                self.tree.item(iid, tags=(tag,))
-                break
-        # Update overall health state for the pulsing indicator
+    def _blink_alert(self):
+        # Check if any host is Down
         any_down = False
-        for iid in self.tree.get_children(""):
-            if self.tree.set(iid, "status") == "Down":
+        stats_snapshot = self.manager.stats_snapshot()
+        for stats in stats_snapshot.values():
+            if stats.last_status == "Down":
                 any_down = True
                 break
-        self._any_down = any_down
+        
+        if any_down:
+            self.alert_state = not self.alert_state
+            color = "#ff0000" if self.alert_state else "#550000"
+            self.lbl_alert.configure(text="⚠️ SYSTEM ALERT", text_color=color)
+        else:
+            self.lbl_alert.configure(text="⬤ HEALTHY", text_color="#00ff7f")
+            
+        self.after(500, self._blink_alert)
 
-    def _drain_updates(self) -> None:
-        # Pull all available updates without blocking; apply latest per-host
-        latest_by_host: dict[str, HostStats] = {}
+    def _process_queue(self):
+        """Consume all updates from manager queue"""
+        # Also limit updates to Graph to avoid lag? For now update every cycle if needed
+        # Or update graph every 500ms separately
+        
+        needs_graph_update = False
         try:
             while True:
                 stats = self.manager.update_queue.get_nowait()
-                latest_by_host[stats.host] = stats
+                if stats.host in self.hosts_map:
+                    self.hosts_map[stats.host].update_stats(stats)
+                    needs_graph_update = True
         except queue.Empty:
             pass
+        
+        if needs_graph_update:
+            self.graph_panel.update_graph(self.manager.stats_snapshot())
+        
+        # Schedule next check
+        self.after(100, self._process_queue)
 
-        for stats in latest_by_host.values():
-            self._update_tree_with_stats(stats)
-
-        self.after(200, self._drain_updates)
-
-    def _update_graph(self) -> None:
-        try:
-            stats_map = self.manager.stats_snapshot()
-            self._draw_graph(stats_map)
-        except Exception:
-            pass
-        finally:
-            # refresh more slowly than table updates
-            self.after(800, self._update_graph)
-
-    def _draw_graph(self, stats_map: dict[str, HostStats]) -> None:
-        # Clear canvas
-        try:
-            c = self.graph_canvas
-            c.delete("all")
-            w = c.winfo_width() or c.winfo_reqwidth() or 800
-            h = c.winfo_height() or c.winfo_reqheight() or 260
-
-            padding = 6
-            left_margin = 60
-            bottom_margin = 28
-            top_margin = 8
-            inner_w = max(40, w - left_margin - padding)
-            inner_h = max(40, h - top_margin - bottom_margin)
-
-            hosts = list(stats_map.keys())
-            # filter hosts by visibility
-            visible_hosts = [h for h in hosts if self._graph_visible.get(h, True)]
-            # map host to a color index
-            color_map: dict[str, str] = {}
-            for idx, host in enumerate(visible_hosts):
-                color_map[host] = self._graph_colors[idx % len(self._graph_colors)]
-
-            # Consider only last 5 minutes
-            now_ts = time.time()
-            window_start = now_ts - 300.0
-
-            # collect global max latency inside window to scale y-axis (default 200ms)
-            global_max = 200.0
-            for h in visible_hosts:
-                s = stats_map.get(h)
-                if not s:
-                    continue
-                for (ts, v) in s.history:
-                    if ts >= window_start and v is not None and v > global_max:
-                        global_max = float(v)
-
-            # draw horizontal grid lines and Y axis labels
-            for i in range(5):
-                frac = i / 4.0
-                y = top_margin + frac * inner_h
-                c.create_line(left_margin, y, left_margin + inner_w, y, fill="#1a1a1a")
-                # label
-                val = int((1.0 - frac) * global_max)
-                c.create_text(left_margin - 8, y, text=f"{val} ms", anchor=tk.E, fill="#c0c0c0", font=(None, 9))
-
-            # Cache the current host colors
-            current_colors = {h: self._graph_colors[idx % len(self._graph_colors)] for idx, h in enumerate(visible_hosts)}
-            # Only rebuild legend if hosts or colors changed
-            if not hasattr(self, '_last_legend_state') or \
-               self._last_legend_state != (tuple(visible_hosts), tuple(current_colors.items())):
-                try:
-                    self._rebuild_legend(visible_hosts, current_colors)
-                    self._last_legend_state = (tuple(visible_hosts), tuple(current_colors.items()))
-                except Exception:
-                    pass
-
-            # draw each host history as a time-based polyline within the 5-minute window
-            for host_idx, host in enumerate(visible_hosts):
-                s = stats_map.get(host)
-                hist = [(ts, v) for (ts, v) in s.history if ts >= window_start]
-                if not hist:
-                    continue
-                # map times to x positions, forcing full window width usage
-                points = []
-                hist_start = min(t for t, _ in hist)
-                hist_end = max(t for t, _ in hist)
-                # Always show last 5 minutes of data at full width
-                window_end = max(now_ts, hist_end)
-                window_begin = min(window_start, hist_start)
-                window_width = window_end - window_begin
-                
-                for (ts, val) in hist:
-                    tfrac = (ts - window_begin) / window_width if window_width > 0 else 0
-                    x = left_margin + tfrac * inner_w
-                    if val is None:
-                        y = top_margin + inner_h  # lost ping at bottom
-                    else:
-                        y = top_margin + inner_h - (float(val) / global_max) * inner_h
-                    points.append((x, y))
-
-                # flatten points for create_line
-                flat = []
-                for (x, y) in points:
-                    flat.extend([x, y])
-
-                col = current_colors.get(host, "#c0c0c0")
-                # draw shadow and main line
-                c.create_line(*flat, fill="#000000", width=3, smooth=True)
-                c.create_line(*flat, fill=col, width=2, smooth=True)
-
-            # X-axis time markers every minute
-            for minute in range(6):
-                t = window_start + minute * 60
-                if t < window_start:
-                    continue
-                if t > now_ts:
-                    continue
-                tfrac = (t - window_start) / (now_ts - window_start)
-                x = left_margin + tfrac * inner_w
-                c.create_line(x, top_margin + inner_h, x, top_margin + inner_h + 6, fill="#2a2a2a")
-                label = datetime.fromtimestamp(t).strftime("%H:%M")
-                c.create_text(x, top_margin + inner_h + 14, text=label, anchor=tk.N, fill="#c0c0c0", font=(None, 9))
-        except Exception:
-            pass
-
-    def _rebuild_legend(self, hosts: list[str], color_map: dict[str, str]) -> None:
-        try:
-            # Clear current legend widgets
-            for child in self.legend_frame.winfo_children():
-                child.destroy()
-            
-            # Center-aligned container for legend entries
-            inner = ttk.Frame(self.legend_frame)
-            inner.pack(expand=True)
-            
-            # Simple horizontal layout - just color boxes and host names
-            for h in hosts:
-                # Frame for each legend entry
-                frm = ttk.Frame(inner, style="Dark.TFrame")
-                frm.pack(side=tk.LEFT, padx=8)
-                
-                # Simple colored box
-                color = color_map.get(h, "#c0c0c0")
-                sw = tk.Canvas(frm, width=14, height=14, highlightthickness=0, bg="#0f0f0f")
-                sw.create_rectangle(2, 2, 12, 12, fill=color, outline=color)
-                sw.pack(side=tk.LEFT)
-                
-                # Host name - simple label with dark background
-                label = ttk.Label(frm, text=h, style="Dark.TLabel")
-                label.pack(side=tk.LEFT, padx=(4, 0))
-        except Exception:
-            pass
-
-    def _on_legend_toggle(self, host: str, var: tk.BooleanVar) -> None:
-        self._graph_visible[host] = bool(var.get())
-
-    def _alert_blink_step(self) -> None:
-        try:
-            # Toggle blink state
-            self._alert_blink_state = not getattr(self, "_alert_blink_state", False)
-            if getattr(self, "_any_down", False):
-                # Show and blink the alert bar with brighter colors
-                if not self._alert_bar.winfo_ismapped():
-                    self._alert_bar.pack(side=tk.TOP, fill=tk.X)
-                bg = "#ff1a1a" if self._alert_blink_state else "#cc0000"
-                try:
-                    self._alert_bar.configure(bg=bg)
-                except Exception:
-                    pass
-                
-                # Also blink any down-state rows
-                try:
-                    for item in self.tree.get_children():
-                        tags = list(self.tree.item(item, "tags"))
-                        if "down" in tags:
-                            if self._alert_blink_state:
-                                if "blink" not in tags:
-                                    tags.append("blink")
-                            else:
-                                if "blink" in tags:
-                                    tags.remove("blink")
-                            self.tree.item(item, tags=tags)
-                except Exception:
-                    pass
-            else:
-                if self._alert_bar.winfo_ismapped():
-                    self._alert_bar.pack_forget()
-                # Remove blink tag from all rows when alert cleared
-                try:
-                    for item in self.tree.get_children():
-                        tags = list(self.tree.item(item, "tags"))
-                        if "blink" in tags:
-                            tags.remove("blink")
-                            self.tree.item(item, tags=tags)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        finally:
-            self.after(400, self._alert_blink_step)
-
-    def _load_hosts(self) -> list[str]:
-        try:
-            with open(HOSTS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                normalized: list[str] = []
-                seen = set()
-                for x in data:
-                    host = self._normalize_host(str(x))
-                    if host and host not in seen:
-                        seen.add(host)
-                        normalized.append(host)
-                return normalized
-            return []
-        except FileNotFoundError:
-            return []
-        except Exception:
-            return []
-
-    def _save_hosts(self) -> None:
-        hosts = sorted(self._get_all_tree_hosts())
-        try:
-            with open(HOSTS_FILE, "w", encoding="utf-8") as f:
-                json.dump(hosts, f, indent=2)
-        except Exception:
-            pass
-
-    def _on_close(self) -> None:
-        try:
-            # Save window geometry
-            geom = self.geometry()
-            self._settings["window_geometry"] = geom
-            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._settings, f, indent=2)
-        except Exception:
-            pass
-        finally:
-            self.manager.stop_all()
-            self.destroy()
-
-    def _load_settings(self) -> dict:
-        try:
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return data
-        except Exception:
-            pass
-        return {"default_interval": DEFAULT_INTERVAL_SECONDS}
-
-    def _normalize_host(self, raw: str) -> str:
-        # Strip leading markers like '@'
-        val = raw.strip()
-        while val.startswith("@"):
-            val = val[1:]
-        # If it looks like a URL without scheme, add http:// for parsing
-        tmp = val
-        if "://" not in tmp:
-            tmp = "http://" + tmp
-        try:
-            parsed = urlparse(tmp)
-            host = parsed.hostname or ""
-        except Exception:
-            host = ""
-        # Remove surrounding brackets for IPv6 if any
-        if host.startswith("[") and host.endswith("]"):
-            host = host[1:-1]
-        return host
-
-    def _on_about(self) -> None:
-        messagebox.showinfo(APP_TITLE, "Ping multiple hosts with live status. Built with Tkinter.\n\nCredits: YvezxCode")
-
-    def _on_export_csv(self) -> None:
-        # Export current rows to a CSV in the current directory with timestamp
-        import csv
-        filename = f"ping_export_{int(time.time())}.csv"
-        try:
-            with open(filename, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(["Host", "Status", "Latency(ms)", "Avg(ms)", "Min(ms)", "Max(ms)", "Sent", "Recv", "Loss%", "Uptime%", "LastSeen", "Message"])
-                for iid in self.tree.get_children(""):
-                    vals = self.tree.item(iid, "values")
-                    # values: icon, host, status, latency, avg, min, max, sent, received, loss, uptime, last_seen, message
-                    writer.writerow([vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7], vals[8], vals[9], vals[10], vals[11], vals[12]])
-            messagebox.showinfo("Export", f"Saved {filename}")
-        except Exception as exc:
-            messagebox.showerror("Export", f"Failed to export: {exc}")
-
-    def _toggle_column(self, col: str) -> None:
-        visible = self._column_vars[col].get()
-        if visible:
-            self.tree.heading(col, text=self.tree.heading(col, option="text"))
-            self.tree.column(col, width=90 if col in ("avg", "min", "max") else (80 if col == "uptime" else 300))
-        else:
-            self.tree.column(col, width=0, stretch=False)
-            self.tree.heading(col, text="")
-
-    def _on_tree_click_blank(self, event) -> None:
-        # If click is not on a row, clear selection
-        region = self.tree.identify("region", event.x, event.y)
-        if region != "cell":
-            self.tree.selection_remove(self.tree.selection())
-
-    def _on_tree_double(self, event) -> None:
-        # Copy host of double-clicked row to clipboard
-        iid = self.tree.identify_row(event.y)
-        if not iid:
+    def _add_host_card(self, host: str):
+        if host in self.hosts_map:
             return
-        host = self.tree.set(iid, "host")
+        
+        card = HostCard(self.scroll_frame, host=host, remove_callback=self._remove_host_request)
+        card.grid(row=len(self.hosts_map), column=0, padx=5, pady=5, sticky="ew")
+        self.hosts_map[host] = card
+        
+        # Start monitoring
+        self.manager.add_host(host)
+
+    def _remove_host_request(self, host: str):
+        if host in self.hosts_map:
+            card = self.hosts_map.pop(host)
+            card.destroy()
+            self.manager.remove_host(host)
+            
+            # Re-pack grid
+            for i, (h, c) in enumerate(self.hosts_map.items()):
+                c.grid(row=i, column=0, padx=5, pady=5, sticky="ew")
+
+    # ... Other methods same as before ...
+    def _on_add_host(self):
+        dialog = ctk.CTkInputDialog(text="Enter Hostname or IP:", title="Add Host")
+        host = dialog.get_input()
         if host:
+            host = host.strip()
+            if "://" in host:
+                try:
+                    parsed = urlparse(host)
+                    host = parsed.netloc or parsed.path
+                except: pass
+            if host:
+                self._add_host_card(host)
+
+    def _on_set_interval(self):
+        dialog = ctk.CTkInputDialog(text="Enter Ping Interval (seconds):", title="Settings")
+        val = dialog.get_input()
+        if val:
             try:
-                self.clipboard_clear()
-                self.clipboard_append(host)
-                self._flash_status(f"Copied {host} to clipboard")
-            except Exception:
-                pass
+                sec = float(val)
+                if sec < 0.2: sec = 0.2
+                for h in self.manager.list_hosts():
+                    self.manager.update_interval(h, sec)
+            except ValueError: pass
 
-    def _flash_status(self, text: str, duration_ms: int = 1500) -> None:
-        # Temporary status message in the status bar
+    def _on_export(self):
+        from tkinter import filedialog
+        filename = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV Files", "*.csv")])
+        if not filename: return
         try:
-            if hasattr(self, "_status_label"):
-                lbl = self._status_label
-                old = lbl.cget("text")
-                lbl.config(text=text)
-                self.after(duration_ms, lambda: lbl.config(text=old))
-        except Exception:
-            pass
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write("Host,Status,Last_Latency_ms,Loss_%,Uptime_%\n")
+                for h, s in self.manager.stats_snapshot().items():
+                    f.write(f"{h},{s.last_status},{s.last_latency_ms},{s.loss_percent()},{s.uptime_percent()}\n")
+        except Exception: pass
 
-    def _health_pulse_step(self) -> None:
-        try:
-            if getattr(self, "_any_down", False):
-                # pulse red to alert
-                phases = ["#ff7b72", "#ff6a63", "#ff8a82", "#ff7b72"]
-                color = phases[self._health_pulse_phase % len(phases)]
-                self._health_canvas.itemconfig(self._health_dot, fill=color)
-                self._health_pulse_phase += 1
-            else:
-                # steady green
-                self._health_canvas.itemconfig(self._health_dot, fill="#7ee787")
-                self._health_pulse_phase = 0
-        except Exception:
-            pass
-        finally:
-            self.after(300, self._health_pulse_step)
+    def _on_about(self):
+        top = ctk.CTkToplevel(self)
+        top.title("About")
+        top.geometry("400x520")
+        top.resizable(False, False)
+        top.lift()
+        top.focus_force()
 
-    def _on_set_interval(self) -> None:
-        selected = self.tree.selection()
-        if not selected:
-            messagebox.showwarning("Interval", "Select a host first.")
-            return
-        host = self.tree.set(selected[0], "host")
-        current = self._settings.get("default_interval", DEFAULT_INTERVAL_SECONDS)
+        lbl_title = ctk.CTkLabel(top, text="Ping Monitor", font=("Arial", 28, "bold"))
+        lbl_title.pack(pady=(30, 10))
+        
+        lbl_ver = ctk.CTkLabel(top, text="v2.1 Dark Edition", text_color="gray")
+        lbl_ver.pack(pady=(0, 20))
+        
+        lbl_cred = ctk.CTkLabel(top, text="Created by Yvexa", font=("Arial", 18))
+        lbl_cred.pack()
+        
+        lbl_link = ctk.CTkLabel(top, text="Yvexa.dev", font=("Arial", 16), text_color="#3b8ed0", cursor="hand2")
+        lbl_link.pack(pady=(0, 20))
+        lbl_link.bind("<Button-1>", lambda e: os.startfile("https://yvexa.dev") if os.name == 'nt' else None)
+
+        qr_path = resource_path("qr.png")
+        if os.path.exists(qr_path):
+            try:
+                pil_img = Image.open(qr_path)
+                pil_img = pil_img.resize((200, 200), Image.Resampling.LANCZOS)
+                img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(200, 200))
+                lbl_img = ctk.CTkLabel(top, image=img, text="")
+                lbl_img.pack(pady=10)
+            except: pass
+        else:
+            ctk.CTkLabel(top, text="(qr.png not found)").pack()
+
+    def _load_hosts(self):
+        path = resource_path("hosts.json")
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    hosts = json.load(f)
+                    for h in hosts:
+                        self._add_host_card(h)
+            except: pass
+
+    def _save_hosts(self):
+        hosts = list(self.hosts_map.keys())
+        path = resource_path("hosts.json")
         try:
-            value = simpledialog.askfloat("Interval", f"Set interval (seconds) for {host}", initialvalue=current, minvalue=0.2, maxvalue=60.0)
-        except Exception:
-            value = None
-        if value is None:
-            return
-        self.manager.update_interval(host, value)
-        self._settings["default_interval"] = float(value)
+            with open(path, "w") as f:
+                json.dump(hosts, f, indent=2)
+        except: pass
+
+    def _on_close(self):
+        self._save_hosts()
+        self.manager.stop_all()
+        self.destroy()
+        sys.exit(0)
 
 
 if __name__ == "__main__":
     app = PingApp()
     app.mainloop()
-
-
