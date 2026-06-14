@@ -4,6 +4,7 @@ import queue
 import sys
 import threading
 import time
+import ctypes
 from datetime import datetime
 from urllib.parse import urlparse
 from typing import Dict, Optional, List, TypedDict
@@ -320,6 +321,12 @@ class PingApp(ctk.CTk):
         self.sidebar_expanded = True
         self.show_graph_val = ctk.BooleanVar(value=True) # Graph toggle
         
+        # Audio alert state
+        self.mute_val = ctk.BooleanVar(value=False)
+        self.audio_playing = False
+        self.prompt_shown = False
+        self.toplevel_mute_prompt = None
+        
         # Setup UI
         self._build_layout()
         
@@ -375,6 +382,11 @@ class PingApp(ctk.CTk):
         self.switch_graph = ctk.CTkSwitch(self.sidebar_content, text="Show Graph", command=self._toggle_graph, 
                                           variable=self.show_graph_val, font=("Roboto", 13))
         self.switch_graph.pack(padx=20, pady=15, fill="x", anchor="w")
+
+        # Mute Toggle (Switch)
+        self.switch_mute = ctk.CTkSwitch(self.sidebar_content, text="Mute Audio", command=self._toggle_mute,
+                                         variable=self.mute_val, font=("Roboto", 13))
+        self.switch_mute.pack(padx=20, pady=15, fill="x", anchor="w")
 
         # Spacer
         self.btn_about = ctk.CTkButton(self.sidebar_content, text="About", command=self._on_about, 
@@ -457,6 +469,7 @@ class PingApp(ctk.CTk):
         self.btn_interval.pack_forget()
         self.btn_export.pack_forget()
         self.switch_graph.pack_forget()
+        self.switch_mute.pack_forget()
         self.btn_about.pack_forget()
         
         if self.sidebar_expanded:
@@ -471,6 +484,7 @@ class PingApp(ctk.CTk):
             self.btn_interval.pack(padx=20, pady=10, fill="x", after=self.btn_add)
             self.btn_export.pack(padx=20, pady=10, fill="x", after=self.btn_interval)
             self.switch_graph.pack(padx=20, pady=15, fill="x", anchor="w", after=self.btn_export)
+            self.switch_mute.pack(padx=20, pady=15, fill="x", anchor="w", after=self.switch_graph)
             self.btn_about.pack(side="bottom", padx=20, pady=20, fill="x")
 
     def _blink_logic(self):
@@ -492,11 +506,85 @@ class PingApp(ctk.CTk):
             banner_bg = "#ff0000" if self.alert_state else "#880000"
             self.warning_banner.configure(fg_color=banner_bg)
             self.lbl_status.configure(text="CRITICAL", text_color="#ff0000")
+            
+            if not self.mute_val.get():
+                self._play_alert_audio()
+                if not self.prompt_shown and (self.toplevel_mute_prompt is None or not self.toplevel_mute_prompt.winfo_exists()):
+                    self.prompt_shown = True
+                    self._show_mute_prompt()
         else:
             self.warning_banner.grid_remove() 
             self.lbl_status.configure(text="⬤ HEALTHY", text_color="#00ff7f")
+            self._stop_alert_audio()
+            self.prompt_shown = False
+            if self.toplevel_mute_prompt is not None and self.toplevel_mute_prompt.winfo_exists():
+                self.toplevel_mute_prompt.destroy()
+                self.toplevel_mute_prompt = None
             
         self.after(500, self._blink_logic)
+
+    def _play_alert_audio(self):
+        if not self.audio_playing:
+            try:
+                audio_file = os.path.abspath(resource_path(os.path.join("Source", "alert2.mp3")))
+                if os.path.exists(audio_file):
+                    ctypes.windll.winmm.mciSendStringW("close alert", None, 0, 0)
+                    cmd_open = f'open "{audio_file}" type mpegvideo alias alert'
+                    ctypes.windll.winmm.mciSendStringW(cmd_open, None, 0, 0)
+                    ctypes.windll.winmm.mciSendStringW("play alert repeat", None, 0, 0)
+                    self.audio_playing = True
+            except:
+                pass
+
+    def _stop_alert_audio(self):
+        if self.audio_playing:
+            try:
+                ctypes.windll.winmm.mciSendStringW("stop alert", None, 0, 0)
+                ctypes.windll.winmm.mciSendStringW("close alert", None, 0, 0)
+            except:
+                pass
+            self.audio_playing = False
+
+    def _toggle_mute(self):
+        if self.mute_val.get():
+            self._stop_alert_audio()
+        else:
+            stats_snapshot = self.manager.stats_snapshot()
+            any_down = any(stats.last_status == "Down" for stats in stats_snapshot.values())
+            if any_down:
+                self._play_alert_audio()
+
+    def _show_mute_prompt(self):
+        if self.toplevel_mute_prompt is None or not self.toplevel_mute_prompt.winfo_exists():
+            self.toplevel_mute_prompt = ctk.CTkToplevel(self)
+            self.toplevel_mute_prompt.title("Alert Audio")
+            self.toplevel_mute_prompt.geometry("350x180")
+            self.toplevel_mute_prompt.resizable(False, False)
+            self.toplevel_mute_prompt.lift()
+            self.toplevel_mute_prompt.focus_force()
+            self.toplevel_mute_prompt.attributes("-topmost", True)
+            
+            lbl = ctk.CTkLabel(self.toplevel_mute_prompt, text="⚠️ Warning: One or more hosts are down!\nDo you want to mute the alert audio?", font=("Roboto", 14), justify="center")
+            lbl.pack(pady=(25, 20), padx=20)
+            
+            btn_frame = ctk.CTkFrame(self.toplevel_mute_prompt, fg_color="transparent")
+            btn_frame.pack(pady=10)
+            
+            def _mute():
+                self.mute_val.set(True)
+                self._toggle_mute()
+                self.toplevel_mute_prompt.destroy()
+                self.toplevel_mute_prompt = None
+                
+            def _keep():
+                self.toplevel_mute_prompt.destroy()
+                self.toplevel_mute_prompt = None
+                
+            btn_mute = ctk.CTkButton(btn_frame, text="Mute", command=_mute, width=100)
+            btn_mute.pack(side="left", padx=10)
+            
+            btn_keep = ctk.CTkButton(btn_frame, text="Keep Playing", command=_keep, width=100, fg_color="transparent", border_width=1, border_color="gray", hover_color="#333333")
+            btn_keep.pack(side="left", padx=10)
 
     def _process_queue(self):
         needs_graph_update = False

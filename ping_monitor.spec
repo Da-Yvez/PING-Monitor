@@ -1,4 +1,4 @@
-﻿# -*- mode: python ; coding: utf-8 -*-
+# -*- mode: python ; coding: utf-8 -*-
 
 block_cipher = None
 
@@ -9,6 +9,7 @@ a = Analysis(
     datas=[
         ('ping_monitor_icon.ico', '.'),
         ('qr.png', '.'),
+        ('Source', 'Source'),
     ],
     hiddenimports=[],
     hookspath=[],
